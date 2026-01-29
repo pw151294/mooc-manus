@@ -1,0 +1,28 @@
+[redis]
+addr = "127.0.0.1:6379"
+username = ""
+password = ""
+db = 0
+pool_size = 30
+min_idle_conns = 10
+
+[database]
+user = "postgres"
+password = "panwei960801"
+database = "manus"
+host = "127.0.0.1"
+port = 5432
+sslmode = "disable"
+
+[logger]
+level = "info"
+format = "console" # "json" or "console"
+output = "both" # "stdout", "file", or "both"
+log_dir = "./logs"
+log_file = "manus.log"
+max_size = 50 # megabytes
+max_backups = 10
+max_age = 7 # days
+compress = false
+enable_caller = true
+caller_skip = 1

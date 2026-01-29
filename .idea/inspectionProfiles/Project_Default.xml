@@ -1,0 +1,15 @@
+<component name="InspectionProjectProfileManager">
+  <profile version="1.0">
+    <option name="myName" value="Project Default" />
+    <inspection_tool class="DuplicatedCode" enabled="true" level="WEAK WARNING" enabled_by_default="true">
+      <Languages>
+        <language minSize="46" name="Go" />
+      </Languages>
+    </inspection_tool>
+    <inspection_tool class="GoDfaErrorMayBeNotNil" enabled="true" level="WARNING" enabled_by_default="true">
+      <methods>
+        <method importPath="mooc-manus/internal/domains/services/agents" receiver="*BaseAgent" name="InvokeLLM" />
+      </methods>
+    </inspection_tool>
+  </profile>
+</component>
