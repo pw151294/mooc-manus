@@ -7,6 +7,9 @@
       </Languages>
     </inspection_tool>
     <inspection_tool class="GoDfaErrorMayBeNotNil" enabled="true" level="WARNING" enabled_by_default="true">
+      <functions>
+        <function importPath="mooc-manus/internal/domains/models/agents" name="ConvertMessage2Plan" />
+      </functions>
       <methods>
         <method importPath="mooc-manus/internal/domains/services/agents" receiver="*BaseAgent" name="InvokeLLM" />
       </methods>

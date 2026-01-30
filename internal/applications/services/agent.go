@@ -16,6 +16,7 @@ import (
 type BaseAgentApplicationService interface {
 	Chat(dtos.AgentChatClientRequest, http.ResponseWriter)
 	CreatePlan(dtos.AgentPlanCreateClientRequest, http.ResponseWriter)
+	UpdatePlan(dtos.AgentPlanUpdateClientRequest, http.ResponseWriter)
 }
 
 type BaseAgentApplicationServiceImpl struct {
@@ -58,35 +59,78 @@ func (s *BaseAgentApplicationServiceImpl) CreatePlan(clientRequest dtos.AgentPla
 	}
 	logger.Info("start new conversation", zap.String("conversationId", clientRequest.ConversationId))
 
-	request := dtos.ConvertAgentPlanCreateClientRequest2DORequest(clientRequest)
+	request := dtos.ConvertPlanCreateClientRequest2DORequest(clientRequest)
 	messageId := sse.StartChat(writer)
-	logger.Info("start create plan", zap.String("messageId", messageId))
+	logger.Info("start create plans", zap.String("messageId", messageId))
 	defer func() {
 		sse.CloseChat(messageId)
-		logger.Info("end create plan", zap.String("messageId", messageId))
+		logger.Info("end create plans", zap.String("messageId", messageId))
 	}()
 
 	var wg sync.WaitGroup
 	wg.Add(1)
 	eventCh := make(chan events.AgentEvent)
-	logger.Info("begin create plan in domain service")
+	logger.Info("begin create plans in domain service")
 	go func() {
 		s.agentDomainSvc.CreatePlan(request, eventCh)
 		wg.Done()
 	}()
 
 	for event := range eventCh {
+		event.SaveConversationId(clientRequest.ConversationId)
 		switch event.EventType() {
 		case events.EventTypePlanCreateSuccess:
 			// todo 计划创建成功
 			planEvent := event.(*events.PlanEvent)
-			logger.Info("create plan success", zap.Any("plan", planEvent.Plan))
+			logger.Info("create plans success", zap.Any("plans", planEvent.Plan))
 		case events.EventTypeError:
-			logger.Info("create plan failed", zap.Any("data", event))
+			logger.Info("create plans failed", zap.Any("data", event))
 		// todo 计划创建失败
 		default:
-			logger.Info("receive event during plan creating", zap.String("type", event.EventType()), zap.Any("data", event))
+			logger.Info("receive event during plans creating", zap.String("type", event.EventType()), zap.Any("data", event))
 			// todo 计划创建期间上报的事件
+		}
+		sse.SendEvent(event, messageId)
+	}
+}
+
+func (s *BaseAgentApplicationServiceImpl) UpdatePlan(clientRequest dtos.AgentPlanUpdateClientRequest, writer http.ResponseWriter) {
+	if clientRequest.ConversationId == "" {
+		clientRequest.ConversationId = uuid.New().String()
+	}
+	logger.Info("start new conversation", zap.String("conversationId", clientRequest.ConversationId))
+
+	request := dtos.ConvertPlanUpdateClientRequest2DORequest(clientRequest)
+	messageId := sse.StartChat(writer)
+	logger.Info("start update plans", zap.String("messageId", messageId))
+	defer func() {
+		sse.CloseChat(messageId)
+		logger.Info("end update plans", zap.String("messageId", messageId))
+	}()
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	eventCh := make(chan events.AgentEvent)
+	logger.Info("begin update plans in domain service")
+	go func() {
+		s.agentDomainSvc.UpdatePlan(request, eventCh)
+		wg.Done()
+	}()
+
+	for event := range eventCh {
+		event.SaveConversationId(clientRequest.ConversationId)
+		switch event.EventType() {
+		case events.EventTypePlanUpdateSuccess:
+			planEvent := event.(*events.PlanEvent)
+			logger.Info("update plans success", zap.Any("plans", planEvent.Plan))
+		case events.EventTypePlanUpdateFailed:
+			planEvent := event.(*events.PlanEvent)
+			logger.Info("update plans failed", zap.Any("plans", planEvent.Plan))
+		case events.EventTypeError:
+			errorEvent := event.(*events.ErrorEvent)
+			logger.Info("update plans error", zap.Any("error", errorEvent.Error))
+		default:
+			logger.Info("receive event during plans updating", zap.Any("data", event))
 		}
 		sse.SendEvent(event, messageId)
 	}

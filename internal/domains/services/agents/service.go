@@ -6,6 +6,7 @@ import (
 	"mooc-manus/internal/domains/models"
 	"mooc-manus/internal/domains/models/agents"
 	"mooc-manus/internal/domains/models/memory"
+	"mooc-manus/internal/domains/models/prompts/plans"
 	"mooc-manus/internal/domains/services"
 	"mooc-manus/internal/domains/services/tools"
 	"mooc-manus/internal/infra/external/llm"
@@ -18,6 +19,7 @@ import (
 type BaseAgentDomainService interface {
 	Chat(agents.AgentChatRequest, chan events.AgentEvent)
 	CreatePlan(agents.AgentPlanCreateRequest, chan events.AgentEvent)
+	UpdatePlan(agents.AgentPlanUpdateRequest, chan events.AgentEvent)
 }
 
 type BaseAgentDomainServiceImpl struct {
@@ -87,6 +89,47 @@ func (s *BaseAgentDomainServiceImpl) CreatePlan(request agents.AgentPlanCreateRe
 	wg.Add(1)
 	go func() {
 		planAgent.CreatePlan(request.Query, request.Files, planEventCh)
+		wg.Done()
+	}()
+	for event := range planEventCh {
+		eventCh <- event
+	}
+	wg.Wait()
+	close(eventCh)
+}
+
+func (s *BaseAgentDomainServiceImpl) UpdatePlan(request agents.AgentPlanUpdateRequest, eventCh chan events.AgentEvent) {
+	chatRequest := agents.ConvertPlanUpdateRequest2ChatRequest(request)
+	// 创建规划智能体
+	baseAgent, err := s.createBaseAgent(chatRequest)
+	if err != nil {
+		eventCh <- events.OnError(fmt.Sprintf("初始化规划智能体失败：%s", err.Error()))
+		close(eventCh)
+		return
+	}
+	planAgent := NewPlanAgent(baseAgent)
+	logger.Info("init plan agent success")
+
+	// 查询Plan和Step
+	plan, ok := plans.GetPlanById(request.PlanId)
+	if !ok {
+		eventCh <- events.OnError(fmt.Sprintf("计划不存在：%s", request.PlanId))
+		close(eventCh)
+		return
+	}
+	step, ok := plans.GetStepById(request.StepId)
+	if !ok {
+		eventCh <- events.OnError(fmt.Sprintf("步骤不存在：%s", request.StepId))
+		close(eventCh)
+		return
+	}
+
+	// 调用规划智能体更新计划
+	planEventCh := make(chan events.AgentEvent)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		planAgent.UpdatePlan(plan, step, planEventCh)
 		wg.Done()
 	}()
 	for event := range planEventCh {

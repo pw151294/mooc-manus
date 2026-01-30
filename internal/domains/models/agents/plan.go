@@ -1,5 +1,12 @@
 package agents
 
+import (
+	"encoding/json"
+
+	"github.com/google/uuid"
+	"github.com/kaptinlin/jsonrepair"
+)
+
 type ExecutionStatus string
 
 const (
@@ -28,4 +35,42 @@ type Plan struct {
 	Message  string          `json:"message"`         // 用户传递的消息
 	Status   ExecutionStatus `json:"status"`          // 规划的状态
 	Error    string          `json:"error,omitempty"` // 错误信息
+}
+
+func ConvertMessage2Plan(message string) (Plan, error) {
+	plan := Plan{}
+	repairJson, err := jsonrepair.JSONRepair(message)
+	if err != nil {
+		return plan, err
+	}
+	if err := json.Unmarshal([]byte(repairJson), &plan); err != nil {
+		return Plan{}, err
+	}
+
+	plan.ID = uuid.New().String()
+	plan.Status = Pending
+	for i := range plan.Steps {
+		plan.Steps[i].ID = uuid.New().String()
+		plan.Steps[i].Status = Pending
+		plan.Steps[i].Success = false
+	}
+
+	return plan, nil
+}
+
+func ConvertMessage2UpdatedPlan(message string) (Plan, error) {
+	updatedPlan := Plan{}
+	repairJson, err := jsonrepair.JSONRepair(message)
+	if err != nil {
+		return Plan{}, err
+	}
+	if err := json.Unmarshal([]byte(repairJson), &updatedPlan); err != nil {
+		return Plan{}, err
+	}
+	for i := range updatedPlan.Steps {
+		updatedPlan.Steps[i].ID = uuid.New().String()
+		updatedPlan.Steps[i].Status = Pending // 新计划必然是未执行的
+		updatedPlan.Steps[i].Success = false
+	}
+	return updatedPlan, nil
 }

@@ -8,13 +8,13 @@ import (
 //go:embed system
 var systemPrompt string
 
-//go:embed plan/plan_system
+//go:embed plans/plan_system
 var planSystemPrompt string
 
-//go:embed plan/plan_create
+//go:embed plans/plan_create
 var planCreatePrompt string
 
-//go:embed plan/plan_update
+//go:embed plans/plan_update
 var planUpdatePrompt string
 
 //go:embed react/react_system

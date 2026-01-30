@@ -33,3 +33,11 @@ func (h *AgentHandler) CreatePlan(c *gin.Context) {
 	}
 	h.baseAgentAppSvc.CreatePlan(clientRequest, c.Writer)
 }
+
+func (h *AgentHandler) UpdatePlan(c *gin.Context) {
+	clientRequest := dtos.AgentPlanUpdateClientRequest{}
+	if err := c.ShouldBindJSON(&clientRequest); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	}
+	h.baseAgentAppSvc.UpdatePlan(clientRequest, c.Writer)
+}

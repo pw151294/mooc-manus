@@ -6,11 +6,12 @@ import (
 	"mooc-manus/internal/domains/events"
 	"mooc-manus/internal/domains/models/agents"
 	"mooc-manus/internal/domains/models/prompts"
+	"mooc-manus/internal/domains/models/prompts/plans"
 	"mooc-manus/pkg/logger"
+	"slices"
 	"strings"
 	"sync"
 
-	"github.com/kaptinlin/jsonrepair"
 	"go.uber.org/zap"
 )
 
@@ -45,7 +46,7 @@ func (pa *PlanAgent) CreatePlan(message string, files []agents.File, eventCh cha
 	}
 	query := strings.ReplaceAll(pa.planCreatePrompt, messagePlaceHolder, message)
 	query = strings.ReplaceAll(query, attachmentsPlanHolder, strings.Join(attachments, "\n"))
-	logger.Info("init plan create prompt success", zap.String("prompt", query))
+	logger.Info("init plans create prompt success", zap.String("prompt", query))
 
 	agentEventCh := make(chan events.AgentEvent)
 	var wg sync.WaitGroup
@@ -59,20 +60,76 @@ func (pa *PlanAgent) CreatePlan(message string, files []agents.File, eventCh cha
 		case events.EventTypeMessage:
 			messageEvent := event.(*events.MessageEvent)
 			msg := messageEvent.Message
-			logger.Info("plan created", zap.String("plan", msg))
-			plan := agents.Plan{}
-			repairedMsg, err := jsonrepair.JSONRepair(msg)
+			logger.Info("plans created", zap.String("plans", msg))
+			plan, err := agents.ConvertMessage2Plan(msg)
 			if err != nil {
-				eventCh <- events.OnError(fmt.Sprintf("修复json字符串失败：%s", err.Error()))
+				eventCh <- events.OnError(fmt.Sprintf("Agent创建的计划格式不正确：%s", err.Error()))
+				continue
 			}
-			if err := json.Unmarshal([]byte(repairedMsg), &plan); err != nil {
-				eventCh <- events.OnError(fmt.Sprintf("大模型创建的计划格式不正确：%s", msg))
-			} else {
-				eventCh <- events.OnPlanCreateSuccess(plan)
-			}
+			plans.SaveOrUpdate(plan)
+			eventCh <- events.OnPlanCreateSuccess(plan)
 		default:
-			logger.Info("get event during plan creating",
+			logger.Info("get event during plans creating",
 				zap.String("type", event.EventType()), zap.Any("data", event))
+			eventCh <- event
+		}
+	}
+	wg.Wait()
+	close(eventCh)
+}
+
+func (pa *PlanAgent) UpdatePlan(plan agents.Plan, step agents.Step, eventCh chan<- events.AgentEvent) {
+	planBytes, err := json.Marshal(plan)
+	if err != nil {
+		eventCh <- events.OnPlanUpdateFailed(plan)
+		close(eventCh)
+		return
+	}
+	stepBytes, err := json.Marshal(step)
+	if err != nil {
+		eventCh <- events.OnPlanUpdateFailed(plan)
+		close(eventCh)
+		return
+	}
+	query := strings.ReplaceAll(prompts.GetPlanUpdatePrompt(), planPlaceHolder, string(planBytes))
+	query = strings.ReplaceAll(query, stepPlaceHolder, string(stepBytes))
+
+	agentEventCh := make(chan events.AgentEvent)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		pa.Invoke(query, agentEventCh)
+		wg.Done()
+	}()
+
+	for event := range agentEventCh {
+		switch event.EventType() {
+		case events.EventTypeMessage:
+			messageEvent := event.(*events.MessageEvent)
+			updatedPlan, err := agents.ConvertMessage2UpdatedPlan(messageEvent.Message)
+			if err != nil {
+				eventCh <- events.OnPlanUpdateFailed(plan)
+				continue
+			}
+			newSteps := make([]agents.Step, len(updatedPlan.Steps))
+			copy(newSteps, updatedPlan.Steps)
+
+			// 查询旧计划中第一个未完成的计划
+			pendingStatus := []agents.ExecutionStatus{agents.Pending, agents.Running}
+			firstPendingIdx := -1
+			for idx, stp := range plan.Steps {
+				if slices.Contains(pendingStatus, stp.Status) {
+					firstPendingIdx = idx
+					break
+				}
+			}
+			// 更新所有未完成的计划
+			if firstPendingIdx != -1 {
+				plan.Steps = append(plan.Steps[:firstPendingIdx], newSteps...)
+				plans.SaveOrUpdate(updatedPlan)
+			}
+			eventCh <- events.OnPlanUpdateSuccess(plan)
+		default:
 			eventCh <- event
 		}
 	}

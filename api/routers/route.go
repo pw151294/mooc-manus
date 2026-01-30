@@ -71,6 +71,7 @@ func InitRouter() *gin.Engine {
 	{
 		agent.POST("/chat", agentHandler.Chat)
 		agent.POST("/plan/create", agentHandler.CreatePlan)
+		agent.POST("/plan/update", agentHandler.UpdatePlan)
 	}
 
 	return r

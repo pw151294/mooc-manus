@@ -1,6 +1,8 @@
 package dtos
 
-import "mooc-manus/internal/domains/models/agents"
+import (
+	"mooc-manus/internal/domains/models/agents"
+)
 
 type AgentChatClientRequest struct {
 	Streaming      bool          `json:"streaming"`
@@ -19,6 +21,14 @@ type AgentPlanCreateClientRequest struct {
 	Query          string        `json:"query"`
 	AppConfigId    string        `json:"appConfigId"`
 	Files          []interface{} `json:"files"`
+}
+
+type AgentPlanUpdateClientRequest struct {
+	ApiKey         string `json:"apiKey"`
+	ConversationId string `json:"conversationId"`
+	AppConfigId    string `json:"appConfigId"`
+	PlanId         string `json:"planId"`
+	StepId         string `json:"stepId"`
 }
 
 func convertInterfaces2Files(datas []interface{}) []agents.File {
@@ -56,13 +66,24 @@ func ConvertPlanCreateClientRequest2ChatRequest(clientRequest AgentPlanCreateCli
 	return request
 }
 
-func ConvertAgentPlanCreateClientRequest2DORequest(clientRequest AgentPlanCreateClientRequest) agents.AgentPlanCreateRequest {
+func ConvertPlanCreateClientRequest2DORequest(clientRequest AgentPlanCreateClientRequest) agents.AgentPlanCreateRequest {
 	request := agents.AgentPlanCreateRequest{}
 	request.Query = clientRequest.Query
 	request.ApiKey = clientRequest.ApiKey
 	request.ConversationId = clientRequest.ConversationId
 	request.AppConfigId = clientRequest.AppConfigId
 	request.Files = convertInterfaces2Files(clientRequest.Files)
+
+	return request
+}
+
+func ConvertPlanUpdateClientRequest2DORequest(clientRequest AgentPlanUpdateClientRequest) agents.AgentPlanUpdateRequest {
+	request := agents.AgentPlanUpdateRequest{}
+	request.ApiKey = clientRequest.ApiKey
+	request.ConversationId = clientRequest.ConversationId
+	request.AppConfigId = clientRequest.AppConfigId
+	request.PlanId = clientRequest.PlanId
+	request.StepId = clientRequest.StepId
 
 	return request
 }

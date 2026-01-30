@@ -2,6 +2,6 @@ package agents
 
 const messagePlaceHolder = "{message}"
 const attachmentsPlanHolder = "{attachments}"
-const planPlaceHolder = "{plan}"
+const planPlaceHolder = "{plans}"
 const stepPlaceHolder = "{step}"
 const languagePlaceHolder = "{language}"
