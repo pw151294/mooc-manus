@@ -17,6 +17,7 @@ import (
 
 type BaseAgentDomainService interface {
 	Chat(agents.AgentChatRequest, chan events.AgentEvent)
+	CreatePlan(agents.AgentPlanCreateRequest, chan events.AgentEvent)
 }
 
 type BaseAgentDomainServiceImpl struct {
@@ -68,6 +69,33 @@ func (s *BaseAgentDomainServiceImpl) Chat(request agents.AgentChatRequest, event
 	}()
 }
 
+func (s *BaseAgentDomainServiceImpl) CreatePlan(request agents.AgentPlanCreateRequest, eventCh chan events.AgentEvent) {
+	chatReq := agents.ConvertPlanCreateRequest2ChatRequest(request)
+	// 先创建规划智能体
+	baseAgent, err := s.createBaseAgent(chatReq)
+	if err != nil {
+		eventCh <- events.OnError(fmt.Sprintf("初始化规划智能体失败：%s", err.Error()))
+		close(eventCh)
+		return
+	}
+	planAgent := NewPlanAgent(baseAgent)
+	logger.Info("init plan agent success")
+
+	// 调用规划智能体创建计划
+	planEventCh := make(chan events.AgentEvent)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		planAgent.CreatePlan(request.Query, request.Files, planEventCh)
+		wg.Done()
+	}()
+	for event := range planEventCh {
+		eventCh <- event
+	}
+	wg.Wait()
+	close(eventCh)
+}
+
 func (s *BaseAgentDomainServiceImpl) createBaseAgent(request agents.AgentChatRequest) (*BaseAgent, error) {
 	appConfig, err := s.appConfigDomainSvc.GetById(request.AppConfigId)
 	if err != nil {
@@ -80,7 +108,7 @@ func (s *BaseAgentDomainServiceImpl) createBaseAgent(request agents.AgentChatReq
 
 	// 初始化工具tools
 	functions, err := s.functionDomainSvc.GetByIds(request.FunctionIds)
-	if err != nil || len(functions) == 0 {
+	if err != nil {
 		return nil, err
 	}
 	logger.Info("get functions from function ids",

@@ -70,6 +70,7 @@ func InitRouter() *gin.Engine {
 	agent := r.Group("/api/agent")
 	{
 		agent.POST("/chat", agentHandler.Chat)
+		agent.POST("/plan/create", agentHandler.CreatePlan)
 	}
 
 	return r

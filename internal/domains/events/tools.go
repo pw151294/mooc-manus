@@ -12,7 +12,6 @@ import (
 
 type ToolEvent struct {
 	BaseEvent
-	Type           string                 `json:"type"`
 	Timestamp      time.Time              `json:"timestamp"`
 	ToolCallID     string                 `json:"tool_call_id"`    // 工具调用ID
 	ToolName       string                 `json:"tool_name"`       // 工具集(provider)名称
@@ -39,7 +38,6 @@ func convert2ToolEvent(toolCall openai.ChatCompletionMessageToolCall, toolName s
 
 	toolEvent := ToolEvent{}
 	toolEvent.ID = uuid.New().String()
-	toolEvent.Type = EventTypeTool
 	toolEvent.CreatedAt = time.Now()
 	toolEvent.Timestamp = time.Now()
 	toolEvent.ToolCallID = toolCall.ID
@@ -52,17 +50,20 @@ func convert2ToolEvent(toolCall openai.ChatCompletionMessageToolCall, toolName s
 
 func OnToolCallStart(toolCall openai.ChatCompletionMessageToolCall, toolName string) AgentEvent {
 	toolEvent := convert2ToolEvent(toolCall, toolName)
+	toolEvent.Type = EventTypeToolCallStart
 	toolEvent.Status = ToolEventStatusCalling
 	return &toolEvent
 }
 func OnToolCallComplete(toolCall openai.ChatCompletionMessageToolCall, toolName string, result *models.ToolCallResult) AgentEvent {
 	toolEvent := convert2ToolEvent(toolCall, toolName)
+	toolEvent.Type = EventTypeToolCallComplete
 	toolEvent.Status = ToolEventStatusCompleted
 	toolEvent.FunctionResult = result
 	return &toolEvent
 }
 func OnToolCallFail(toolCall openai.ChatCompletionMessageToolCall, toolName string, result *models.ToolCallResult) AgentEvent {
 	toolEvent := convert2ToolEvent(toolCall, toolName)
+	toolEvent.Type = EventTypeToolCallFail
 	toolEvent.Status = ToolEventStatusFailed
 	toolEvent.FunctionResult = result
 	return &toolEvent

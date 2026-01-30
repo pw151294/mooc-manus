@@ -13,6 +13,25 @@ type AgentChatClientRequest struct {
 	Files          []interface{} `json:"files"`
 }
 
+type AgentPlanCreateClientRequest struct {
+	ApiKey         string        `json:"apiKey"`
+	ConversationId string        `json:"conversationId"`
+	Query          string        `json:"query"`
+	AppConfigId    string        `json:"appConfigId"`
+	Files          []interface{} `json:"files"`
+}
+
+func convertInterfaces2Files(datas []interface{}) []agents.File {
+	files := make([]agents.File, 0, len(datas))
+	for _, data := range datas {
+		file, ok := data.(agents.File)
+		if ok {
+			files = append(files, file)
+		}
+	}
+	return files
+}
+
 func ConvertAgentChatClientRequest2Request(clientRequest AgentChatClientRequest) agents.AgentChatRequest {
 	request := agents.AgentChatRequest{}
 	request.Streaming = clientRequest.Streaming
@@ -22,6 +41,28 @@ func ConvertAgentChatClientRequest2Request(clientRequest AgentChatClientRequest)
 	request.Query = clientRequest.Query
 	request.AppConfigId = clientRequest.AppConfigId
 	request.FunctionIds = clientRequest.FunctionIds
-	//request.Files = ? todo 此处需要设计转换的格式
+	request.Files = convertInterfaces2Files(clientRequest.Files)
+	return request
+}
+
+func ConvertPlanCreateClientRequest2ChatRequest(clientRequest AgentPlanCreateClientRequest) agents.AgentChatRequest {
+	request := agents.AgentChatRequest{}
+	request.Streaming = true
+	request.ApiKey = clientRequest.ApiKey
+	request.ConversationId = clientRequest.ConversationId
+	request.Query = clientRequest.Query
+	request.AppConfigId = clientRequest.AppConfigId
+	request.Files = convertInterfaces2Files(clientRequest.Files)
+	return request
+}
+
+func ConvertAgentPlanCreateClientRequest2DORequest(clientRequest AgentPlanCreateClientRequest) agents.AgentPlanCreateRequest {
+	request := agents.AgentPlanCreateRequest{}
+	request.Query = clientRequest.Query
+	request.ApiKey = clientRequest.ApiKey
+	request.ConversationId = clientRequest.ConversationId
+	request.AppConfigId = clientRequest.AppConfigId
+	request.Files = convertInterfaces2Files(clientRequest.Files)
+
 	return request
 }

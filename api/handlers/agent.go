@@ -25,3 +25,11 @@ func (h *AgentHandler) Chat(c *gin.Context) {
 	}
 	h.baseAgentAppSvc.Chat(clientRequest, c.Writer)
 }
+
+func (h *AgentHandler) CreatePlan(c *gin.Context) {
+	clientRequest := dtos.AgentPlanCreateClientRequest{}
+	if err := c.ShouldBindJSON(&clientRequest); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	}
+	h.baseAgentAppSvc.CreatePlan(clientRequest, c.Writer)
+}
