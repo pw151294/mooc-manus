@@ -14,6 +14,7 @@ type ToolFunctionDomainService interface {
 	Update(models.ToolFunctionDO) error
 	DeleteById(string) error
 	GetByIds([]string) ([]models.ToolFunctionDO, error)
+	ListBy(functionIds []string, providerIds []string) ([]models.ToolFunctionDO, error)
 	ListByProviderId(string) ([]models.ToolFunctionDO, error)
 	List() ([]models.ToolFunctionDO, error)
 }
@@ -114,6 +115,22 @@ func (t *ToolFunctionDomainServiceImpl) DeleteById(id string) error {
 
 func (t *ToolFunctionDomainServiceImpl) ListByProviderId(providerId string) ([]models.ToolFunctionDO, error) {
 	pos, err := t.functionRepo.ListByProviderId(providerId)
+	if err != nil {
+		return nil, err
+	}
+	var dos []models.ToolFunctionDO
+	for _, po := range pos {
+		do, err := models.ConvertToolFunctionPO2DO(po)
+		if err != nil {
+			return nil, err
+		}
+		dos = append(dos, do)
+	}
+	return dos, nil
+}
+
+func (t *ToolFunctionDomainServiceImpl) ListBy(functionIds []string, providerIds []string) ([]models.ToolFunctionDO, error) {
+	pos, err := t.functionRepo.ListBy(functionIds, providerIds)
 	if err != nil {
 		return nil, err
 	}

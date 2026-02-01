@@ -8,6 +8,7 @@ type AgentChatRequest struct {
 	Query          string
 	AppConfigId    string
 	FunctionIds    []string
+	ProviderIds    []string
 	Files          []File
 }
 
@@ -27,6 +28,17 @@ type AgentPlanUpdateRequest struct {
 	StepId         string
 }
 
+type AgentExecuteRequest struct {
+	ApiKey         string
+	ConversationId string
+	AppConfigId    string
+	PlanId         string
+	StepId         string
+	FunctionIds    []string
+	ProviderIds    []string
+	Attachments    []string
+}
+
 func ConvertPlanCreateRequest2ChatRequest(planCreateRequest AgentPlanCreateRequest) AgentChatRequest {
 	request := AgentChatRequest{}
 	request.ApiKey = planCreateRequest.ApiKey
@@ -42,5 +54,16 @@ func ConvertPlanUpdateRequest2ChatRequest(planUpdateRequest AgentPlanUpdateReque
 	request.ApiKey = planUpdateRequest.ApiKey
 	request.ConversationId = planUpdateRequest.ConversationId
 	request.AppConfigId = planUpdateRequest.AppConfigId
+	return request
+}
+
+func ConvertAgentExecuteRequest2ChatRequest(executeRequest AgentExecuteRequest) AgentChatRequest {
+	request := AgentChatRequest{}
+	request.ApiKey = executeRequest.ApiKey
+	request.ConversationId = executeRequest.ConversationId
+	request.AppConfigId = executeRequest.AppConfigId
+	request.FunctionIds = executeRequest.FunctionIds
+	request.ProviderIds = executeRequest.ProviderIds
+
 	return request
 }

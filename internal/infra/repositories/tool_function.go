@@ -13,7 +13,9 @@ type ToolFunctionRepository interface {
 	Update(models.ToolFunctionPO) error
 	DeleteById(string) error
 	DeleteByIds([]string) error
+	DeleteByProviderId(string) error // Added interface
 	GetByIds([]string) ([]models.ToolFunctionPO, error)
+	ListBy(functionIds []string, providerIds []string) ([]models.ToolFunctionPO, error)
 	ListByProviderId(string) ([]models.ToolFunctionPO, error)
 	List() ([]models.ToolFunctionPO, error)
 	Transaction(func(txFuncRepo ToolFunctionRepository, txProviderRepo ToolProviderRepository) error) error
@@ -49,9 +51,32 @@ func (t *ToolFunctionRepositoryImpl) DeleteByIds(ids []string) error {
 	return t.dbCli.Where("id IN ?", ids).Delete(&models.ToolFunctionPO{}).Error
 }
 
+func (t *ToolFunctionRepositoryImpl) DeleteByProviderId(providerId string) error {
+	return t.dbCli.Where("provider_id = ?", providerId).Delete(&models.ToolFunctionPO{}).Error
+}
+
 func (t *ToolFunctionRepositoryImpl) GetByIds(ids []string) ([]models.ToolFunctionPO, error) {
 	var pos []models.ToolFunctionPO
 	err := t.dbCli.Where("id IN ?", ids).Find(&pos).Error
+	return pos, err
+}
+
+func (t *ToolFunctionRepositoryImpl) ListBy(functionIds []string, providerIds []string) ([]models.ToolFunctionPO, error) {
+	var pos []models.ToolFunctionPO
+	if len(functionIds) == 0 && len(providerIds) == 0 {
+		return pos, nil
+	}
+
+	tx := t.dbCli
+	if len(functionIds) > 0 && len(providerIds) > 0 {
+		tx = tx.Where("id IN ? OR provider_id IN ?", functionIds, providerIds)
+	} else if len(functionIds) > 0 {
+		tx = tx.Where("id IN ?", functionIds)
+	} else {
+		tx = tx.Where("provider_id IN ?", providerIds)
+	}
+
+	err := tx.Find(&pos).Error
 	return pos, err
 }
 

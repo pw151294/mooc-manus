@@ -17,6 +17,14 @@ type ToolProviderDomainService interface {
 
 type ToolProviderDomainServiceImpl struct {
 	providerRepo repositories.ToolProviderRepository
+	functionRepo repositories.ToolFunctionRepository
+}
+
+func NewToolProviderDomainService(providerRepo repositories.ToolProviderRepository, functionRepo repositories.ToolFunctionRepository) ToolProviderDomainService {
+	return &ToolProviderDomainServiceImpl{
+		providerRepo: providerRepo,
+		functionRepo: functionRepo,
+	}
 }
 
 func (t *ToolProviderDomainServiceImpl) GetByIds(ids []string) ([]models.ToolProviderDO, error) {
@@ -43,10 +51,6 @@ func (t *ToolProviderDomainServiceImpl) Exists(id string) bool {
 	return t.providerRepo.Exists(id)
 }
 
-func NewToolProviderDomainService(providerRepo repositories.ToolProviderRepository) ToolProviderDomainService {
-	return &ToolProviderDomainServiceImpl{providerRepo: providerRepo}
-}
-
 func (t *ToolProviderDomainServiceImpl) Create(do models.ToolProviderDO) error {
 	po := models.ConvertToolProviderDO2PO(do)
 	return t.providerRepo.Create(po)
@@ -58,7 +62,15 @@ func (t *ToolProviderDomainServiceImpl) Update(do models.ToolProviderDO) error {
 }
 
 func (t *ToolProviderDomainServiceImpl) DeleteById(id string) error {
-	return t.providerRepo.DeleteById(id)
+	return t.functionRepo.Transaction(func(functionRepo repositories.ToolFunctionRepository, providerRepo repositories.ToolProviderRepository) error {
+		if err := t.providerRepo.DeleteById(id); err != nil {
+			return err
+		}
+		if err := t.functionRepo.DeleteByProviderId(id); err != nil {
+			return err
+		}
+		return nil
+	})
 }
 
 func (t *ToolProviderDomainServiceImpl) List() ([]models.ToolProviderDO, error) {

@@ -150,7 +150,7 @@ func (s *BaseAgentDomainServiceImpl) createBaseAgent(request agents.AgentChatReq
 	chatMemory := memory.FetchMemory(request.ConversationId)
 
 	// 初始化工具tools
-	functions, err := s.functionDomainSvc.GetByIds(request.FunctionIds)
+	functions, err := s.functionDomainSvc.ListBy(request.FunctionIds, request.ProviderIds)
 	if err != nil {
 		return nil, err
 	}

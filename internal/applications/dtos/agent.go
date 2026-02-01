@@ -12,6 +12,7 @@ type AgentChatClientRequest struct {
 	ConversationId string        `json:"conversationId"`
 	AppConfigId    string        `json:"appConfigId"`
 	FunctionIds    []string      `json:"functionIds"`
+	ProviderIds    []string      `json:"providerIds"`
 	Files          []interface{} `json:"files"`
 }
 
@@ -51,6 +52,7 @@ func ConvertAgentChatClientRequest2Request(clientRequest AgentChatClientRequest)
 	request.Query = clientRequest.Query
 	request.AppConfigId = clientRequest.AppConfigId
 	request.FunctionIds = clientRequest.FunctionIds
+	request.ProviderIds = clientRequest.ProviderIds
 	request.Files = convertInterfaces2Files(clientRequest.Files)
 	return request
 }

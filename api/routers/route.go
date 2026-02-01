@@ -21,10 +21,10 @@ func InitRouter() *gin.Engine {
 	appConfigAppSvc := app_svc.NewAppConfigApplicationService(appConfigDomainSvc)
 
 	providerRepo := repositories.NewToolProviderRepository()
-	providerDomainSvc := domain_svc.NewToolProviderDomainService(providerRepo)
-	providerAppSvc := app_svc.NewToolProviderApplicationService(providerDomainSvc)
 	functionRepo := repositories.NewToolFunctionRepository()
+	providerDomainSvc := domain_svc.NewToolProviderDomainService(providerRepo, functionRepo)
 	functionDomainSvc := domain_svc.NewToolFunctionDomainService(functionRepo, providerRepo)
+	providerAppSvc := app_svc.NewToolProviderApplicationService(providerDomainSvc)
 	functionAppSvc := app_svc.NewTooLFunctionApplicationService(functionDomainSvc)
 	toolHandler := handlers.NewToolHandler(providerAppSvc, functionAppSvc)
 

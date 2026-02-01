@@ -1,29 +1,72 @@
-## 关于Go 1.26版本的信息
+## 主要依赖（来自pyproject.toml）：
 
-根据搜索结果和Go语言的发布周期，我可以为您提供以下信息：
+1. **核心Web框架**：
+    - `fastapi>=0.124.0` - 现代、快速的Web框架
+    - `uvicorn[standard]>=0.38.0` - ASGI服务器
 
-### Go版本发布模式
-Go语言通常每6个月发布一个新版本，按照以下模式：
-- 每年2月发布一个主要版本（如Go 1.20、1.22等）
-- 每年8月发布一个主要版本（如Go 1.21、1.23等）
+2. **数据验证和配置**：
+    - `pydantic>=2.12.5` - 数据验证和设置管理
+    - `pydantic-settings>=2.12.0` - Pydantic配置管理
 
-### 当前状态
-从搜索结果来看，似乎没有找到关于Go 1.26的官方信息，这可能是因为：
+3. **文件处理**：
+    - `python-multipart>=0.0.20` - 处理multipart/form-data请求
 
-1. **Go 1.26可能尚未发布** - 根据Go的发布周期，如果Go 1.25在2024年2月发布，那么Go 1.26可能在2024年8月发布
+4. **MCP协议**：
+    - `mcp>=1.26.0` - Model Context Protocol支持
 
-2. **版本号可能不准确** - 您提到的"golang1.26"可能指的是未来的版本
+5. **包管理**：
+    - `pip>=25.3` - Python包管理器
 
-### 建议
-如果您想了解Go语言的最新版本信息，我建议：
+## 完整依赖列表（来自requirements.txt）：
 
-1. **访问Go官方发布页面**：https://golang.org/doc/devel/release
-2. **查看GitHub上的Go项目**：了解最新的开发进展
-3. **关注Go官方博客**：获取最新的发布公告
+除了上述主要依赖外，requirements.txt还包含了以下间接依赖：
 
-### 当前已知的最新版本
-根据我的知识（截至2023年底），Go的最新版本可能是：
-- Go 1.21（2023年8月发布）
-- Go 1.22（预计2024年2月发布）
+- `annotated-doc==0.0.4`
+- `annotated-types==0.7.0`
+- `anyio==4.12.0`
+- `click==8.3.1`
+- `colorama==0.4.6` (Windows平台)
+- `exceptiongroup==1.3.1` (Python < 3.11)
+- `h11==0.16.0`
+- `httptools==0.7.1`
+- `idna==3.11`
+- `pydantic-core==2.41.5`
+- `python-dotenv==1.2.1`
+- `pyyaml==6.0.3`
+- `starlette==0.50.0`
+- `typing-extensions==4.15.0`
+- `typing-inspection==0.4.2`
+- `uvloop==0.22.1` (非Windows/PyPy平台)
+- `watchfiles==1.1.1`
+- `websockets==15.0.1`
 
-如果您需要更准确的信息，建议直接访问Go语言的官方网站或查看其GitHub仓库的发布页面。
+## 项目特点：
+
+1. **FastAPI项目**：这是一个基于FastAPI的Web API项目
+2. **MCP支持**：集成了Model Context Protocol
+3. **Python版本**：要求Python >= 3.10
+4. **功能模块**：
+    - 文件操作模块
+    - Shell命令执行模块
+    - Supervisor进程管理模块
+
+## 安装建议：
+
+您可以使用以下任一方式安装依赖：
+
+1. **使用uv**（推荐）：
+   ```bash
+   uv pip install -e .
+   ```
+
+2. **使用pip**：
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+3. **使用poetry**（如果配置了）：
+   ```bash
+   poetry install
+   ```
+
+项目看起来是一个沙箱管理系统，提供了文件操作、Shell命令执行和进程管理等功能。
