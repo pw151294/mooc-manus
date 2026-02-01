@@ -76,5 +76,9 @@ func (l *OpenAiLLM) StreamingInvoke(messages []openai.ChatCompletionMessageParam
 		eventCh <- events.OnError(stream.Err().Error())
 	}
 	close(eventCh)
-	return acc.Choices[0].Message
+	if len(acc.Choices) == 0 {
+		return openai.ChatCompletionMessage{}
+	} else {
+		return acc.Choices[0].Message
+	}
 }

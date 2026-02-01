@@ -34,7 +34,11 @@ func ConvertListMcpTools2Functions(providerId string, listToolsResult *mcp.ListT
 		params := make(map[string]any)
 		params["type"] = inputSchema.Type
 		params["properties"] = inputSchema.Properties
-		params["required"] = inputSchema.Required
+		if inputSchema.Required == nil {
+			params["required"] = []string{} // 确保 required 字段不为 nil，OpenAI接口规范严格要求 required 字段必须是一个数组
+		} else {
+			params["required"] = inputSchema.Required
+		}
 		schema.Parameters = params
 
 		function := models.ToolFunctionDO{}

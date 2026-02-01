@@ -72,11 +72,12 @@ func OnStepComplete(step agents.Step) *StepEvent {
 	return &ev
 }
 
-func OnStepFail() *StepEvent {
+func OnStepFail(step agents.Step) *StepEvent {
 	ev := StepEvent{}
 	ev.ID = uuid.New().String()
 	ev.Type = EventTypeStepFail
 	ev.CreatedAt = time.Now()
+	ev.Step = step
 	ev.Status = StepFailed
 	return &ev
 }
