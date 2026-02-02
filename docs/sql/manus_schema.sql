@@ -26,16 +26,17 @@ COMMENT ON COLUMN app_config.max_search_results IS '最大搜索结果数';
 COMMENT ON COLUMN app_config.created_at IS '创建时间';
 COMMENT ON COLUMN app_config.updated_at IS '更新时间';
 
-CREATE TABLE tool_provider (
-                               id VARCHAR(36) PRIMARY KEY,
-                               provider_name VARCHAR(255) NOT NULL,
-                               provider_type VARCHAR(100) NOT NULL,
-                               provider_desc TEXT,
-                               provider_url VARCHAR(255),
-                               provider_transport VARCHAR(100),
-                               created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                               updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                               UNIQUE(provider_name)
+CREATE TABLE tool_provider
+(
+    id                 VARCHAR(36) PRIMARY KEY,
+    provider_name      VARCHAR(255) NOT NULL,
+    provider_type      VARCHAR(100) NOT NULL,
+    provider_desc      TEXT,
+    provider_url       VARCHAR(255),
+    provider_transport VARCHAR(100),
+    created_at         TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at         TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (provider_name)
 );
 
 COMMENT ON TABLE tool_provider IS '工具提供者表';
@@ -48,21 +49,22 @@ COMMENT ON COLUMN tool_provider.provider_transport IS '提供者传输方式';
 COMMENT ON COLUMN tool_provider.created_at IS '创建时间';
 COMMENT ON COLUMN tool_provider.updated_at IS '更新时间';
 
-CREATE TABLE tool_function (
-                               id VARCHAR(36) PRIMARY KEY,
-                               provider_id VARCHAR(36) NOT NULL,
-                               function_name VARCHAR(255) NOT NULL,
-                               function_desc TEXT,
-                               parameters JSONB,
-                               created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                               updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                               CONSTRAINT fk_tool_provider
-                                   FOREIGN KEY(provider_id)
-                                       REFERENCES tool_provider(id)
-                                       ON DELETE CASCADE
+CREATE TABLE tool_function
+(
+    id            VARCHAR(36) PRIMARY KEY,
+    provider_id   VARCHAR(36)  NOT NULL,
+    function_name VARCHAR(255) NOT NULL,
+    function_desc TEXT,
+    parameters    JSONB,
+    created_at    TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at    TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_tool_provider
+        FOREIGN KEY (provider_id)
+            REFERENCES tool_provider (id)
+            ON DELETE CASCADE
 );
 
-CREATE INDEX idx_tool_function_provider_id ON tool_function(provider_id);
+CREATE INDEX idx_tool_function_provider_id ON tool_function (provider_id);
 
 COMMENT ON TABLE tool_function IS '工具函数表';
 COMMENT ON COLUMN tool_function.id IS '主键ID';
@@ -73,3 +75,50 @@ COMMENT ON COLUMN tool_function.parameters IS '函数参数，JSONB格式';
 COMMENT ON COLUMN tool_function.created_at IS '创建时间';
 COMMENT ON COLUMN tool_function.updated_at IS '更新时间';
 
+CREATE TABLE a2a_config
+(
+    id            VARCHAR(36) PRIMARY KEY,
+    app_config_id VARCHAR(36) NOT NULL,
+    ext_info      JSONB,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_app_config
+        FOREIGN KEY (app_config_id)
+            REFERENCES app_config (id)
+            ON DELETE CASCADE
+);
+
+CREATE INDEX idx_a2a_config_app_config_id ON a2a_config (app_config_id);
+
+COMMENT ON TABLE a2a_config IS 'A2A配置表';
+COMMENT ON COLUMN a2a_config.id IS '主键ID';
+COMMENT ON COLUMN a2a_config.app_config_id IS '外键，关联 app_config.id';
+COMMENT ON COLUMN a2a_config.ext_info IS '扩展信息，JSON字符串';
+COMMENT ON COLUMN a2a_config.created_at IS '创建时间';
+COMMENT ON COLUMN a2a_config.updated_at IS '更新时间';
+
+CREATE TABLE a2a_server_config
+(
+    id            VARCHAR(36) PRIMARY KEY,
+    a2a_config_id VARCHAR(36)  NOT NULL,
+    base_url      VARCHAR(255) NOT NULL,
+    enabled       BOOLEAN      NOT NULL DEFAULT TRUE,
+    ext_info      JSONB,
+    created_at    TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at    TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_a2a_config
+        FOREIGN KEY (a2a_config_id)
+            REFERENCES a2a_config (id)
+            ON DELETE CASCADE
+);
+
+CREATE INDEX idx_a2a_server_config_a2a_config_id ON a2a_server_config (a2a_config_id);
+
+COMMENT ON TABLE a2a_server_config IS 'A2A服务配置表';
+COMMENT ON COLUMN a2a_server_config.id IS '主键ID';
+COMMENT ON COLUMN a2a_server_config.a2a_config_id IS '外键，关联 a2a_config.id';
+COMMENT ON COLUMN a2a_server_config.base_url IS 'A2A服务的端点';
+COMMENT ON COLUMN a2a_server_config.enabled IS '该服务的状态启用/禁用';
+COMMENT ON COLUMN a2a_server_config.ext_info IS '扩展信息，JSON字符串';
+COMMENT ON COLUMN a2a_server_config.created_at IS '创建时间';
+COMMENT ON COLUMN a2a_server_config.updated_at IS '更新时间';
