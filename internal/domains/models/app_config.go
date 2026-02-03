@@ -17,10 +17,20 @@ type AgentConfig struct {
 	MaxRetries       int
 	MaxSearchResults int
 }
+
+type A2AServerConfig struct {
+	ID          string
+	Name        string
+	Description string
+	Url         string
+	FunctionIds []string
+}
+
 type AppConfigDO struct {
-	ModelConfig ModelConfig
-	AgentConfig AgentConfig
-	AppConfigID string
+	ModelConfig      ModelConfig
+	AgentConfig      AgentConfig
+	A2AServerConfigs []A2AServerConfig
+	AppConfigID      string
 }
 
 func ConvertAppConfigDO2PO(appConfigDO AppConfigDO) models.AppConfigPO {

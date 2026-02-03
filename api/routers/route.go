@@ -13,23 +13,27 @@ import (
 )
 
 func InitRouter() *gin.Engine {
-
 	r := gin.Default()
 
+	// Initialize repositories
 	appConfigRepo := repositories.NewAppConfigRepository()
-	appConfigDomainSvc := domain_svc.NewAppConfigDomainService(appConfigRepo)
-	appConfigAppSvc := app_svc.NewAppConfigApplicationService(appConfigDomainSvc)
-
 	providerRepo := repositories.NewToolProviderRepository()
 	functionRepo := repositories.NewToolFunctionRepository()
+
+	// Initialize domain services
 	providerDomainSvc := domain_svc.NewToolProviderDomainService(providerRepo, functionRepo)
 	functionDomainSvc := domain_svc.NewToolFunctionDomainService(functionRepo, providerRepo)
+	appConfigDomainSvc := domain_svc.NewAppConfigDomainService(appConfigRepo, functionDomainSvc)
+	baseAgentDomainSvc := agents.NewBaseAgentDomainService(appConfigDomainSvc, providerDomainSvc, functionDomainSvc)
+
+	// Initialize application services
+	appConfigAppSvc := app_svc.NewAppConfigApplicationService(appConfigDomainSvc)
 	providerAppSvc := app_svc.NewToolProviderApplicationService(providerDomainSvc)
 	functionAppSvc := app_svc.NewTooLFunctionApplicationService(functionDomainSvc)
-	toolHandler := handlers.NewToolHandler(providerAppSvc, functionAppSvc)
-
-	baseAgentDomainSvc := agents.NewBaseAgentDomainService(appConfigDomainSvc, providerDomainSvc, functionDomainSvc)
 	baseAgentAppSvc := app_svc.NewBaseAgentApplicationService(baseAgentDomainSvc)
+
+	// Initialize handlers
+	toolHandler := handlers.NewToolHandler(providerAppSvc, functionAppSvc)
 	agentHandler := handlers.NewAgentHandler(baseAgentAppSvc)
 
 	status := r.Group("/api")
@@ -40,7 +44,7 @@ func InitRouter() *gin.Engine {
 		}
 		statusAppSvc := services.NewStatusApplicationService(checkers...)
 		statusHandler := handlers.NewStatusHandler(statusAppSvc)
-		status.GET("/status", statusHandler.Check) // Changed to match typical usage, or keep as /status
+		status.GET("/status", statusHandler.Check)
 	}
 
 	appConfig := r.Group("/api/app/config")
@@ -51,6 +55,10 @@ func InitRouter() *gin.Engine {
 		appConfig.POST("", appConfigHandler.Add)
 		appConfig.DELETE("/:id", appConfigHandler.Delete)
 		appConfig.GET("", appConfigHandler.List)
+		appConfig.GET("/a2a/servers/:id", appConfigHandler.GetA2AServers)
+		appConfig.POST("/a2a/servers", appConfigHandler.CreateA2AServers)
+		appConfig.PUT("/a2a/servers", appConfigHandler.UpdateA2AServers)
+		appConfig.DELETE("/a2a/servers", appConfigHandler.DeleteA2AServers)
 	}
 
 	tool := r.Group("/api/tools")

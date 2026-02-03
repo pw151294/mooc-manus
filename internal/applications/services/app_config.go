@@ -11,6 +11,10 @@ type AppConfigApplicationService interface {
 	LoadAppConfig(id string) (dtos.AppConfigDTO, error)
 	DeleteAppConfig(id string) error
 	GetAllAppConfigs() ([]dtos.AppConfigDTO, error)
+	CreateA2AServers(dtos.CreateA2AServersRequest) error
+	UpdateA2AServers(dtos.UpdateA2AServersRequest) error
+	DeleteA2AServers(request dtos.DeleteA2AServersRequest) error
+	GetA2AServers(appConfigId string) ([]dtos.A2AServerConfigDTO, error)
 }
 
 type AppConfigApplicationServiceImpl struct {
@@ -52,6 +56,32 @@ func (a *AppConfigApplicationServiceImpl) GetAllAppConfigs() ([]dtos.AppConfigDT
 	var dtosList []dtos.AppConfigDTO
 	for _, do := range dos {
 		dtosList = append(dtosList, dtos.ConvertAppConfigDO2DTO(do))
+	}
+	return dtosList, nil
+}
+
+func (a *AppConfigApplicationServiceImpl) CreateA2AServers(request dtos.CreateA2AServersRequest) error {
+	appConfig := dtos.ConvertCreateA2AServersRequest2AppConfigDO(request)
+	return a.appConfigDomainSvc.CreateA2AServers(appConfig)
+}
+
+func (a *AppConfigApplicationServiceImpl) UpdateA2AServers(request dtos.UpdateA2AServersRequest) error {
+	appConfig := dtos.ConvertUpdateA2ARequest2AppConfigDO(request)
+	return a.appConfigDomainSvc.UpdateA2AServers(appConfig)
+}
+
+func (a *AppConfigApplicationServiceImpl) DeleteA2AServers(request dtos.DeleteA2AServersRequest) error {
+	return a.appConfigDomainSvc.DeleteA2AServers(request.A2AServerConfigIds)
+}
+
+func (a *AppConfigApplicationServiceImpl) GetA2AServers(appConfigId string) ([]dtos.A2AServerConfigDTO, error) {
+	dos, err := a.appConfigDomainSvc.GetA2AServers(appConfigId)
+	if err != nil {
+		return nil, err
+	}
+	dtosList := make([]dtos.A2AServerConfigDTO, 0, len(dos))
+	for _, do := range dos {
+		dtosList = append(dtosList, dtos.ConvertA2AServerConfigDO2DTO(do))
 	}
 	return dtosList, nil
 }
