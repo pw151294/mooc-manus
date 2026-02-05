@@ -17,6 +17,7 @@ type AppConfigDomainService interface {
 	UpdateA2AServers(do models.AppConfigDO) error
 	DeleteA2AServers([]string) error
 	GetA2AServers(string) ([]models.A2AServerConfigDO, error)
+	GetA2AServerById(string) (models.A2AServerConfigDO, error)
 }
 
 type AppConfigDomainServiceImpl struct {
@@ -146,4 +147,41 @@ func (a *AppConfigDomainServiceImpl) GetA2AServers(appConfigId string) ([]models
 	}
 
 	return srvCfgs, nil
+}
+
+func (a *AppConfigDomainServiceImpl) GetA2AServerById(id string) (models.A2AServerConfigDO, error) {
+	// 1. 获取基本配置信息
+	cfgPO, err := a.appConfigRepo.GetA2AServerConfigById(id)
+	if err != nil {
+		return models.A2AServerConfigDO{}, err
+	}
+
+	srvCfg, err := models.ConvertA2AServerConfigPO2DO(cfgPO)
+	if err != nil {
+		return models.A2AServerConfigDO{}, err
+	}
+
+	// 2. 获取关联的 FUNCTION 关系
+	srvFuncs, err := a.appConfigRepo.GetA2AServerFunctionsByServerConfigIds([]string{srvCfg.ID})
+	if err != nil {
+		return models.A2AServerConfigDO{}, err
+	}
+
+	// 3. 获取 FUNCTION 详情
+	if len(srvFuncs) > 0 {
+		funcIds := make([]string, 0, len(srvFuncs))
+		for _, srvFunc := range srvFuncs {
+			funcIds = append(funcIds, srvFunc.FunctionID)
+		}
+		funcs, err := a.functionDomainSvc.GetByIds(funcIds)
+		if err != nil {
+			return models.A2AServerConfigDO{}, err
+		}
+		// 4. 组装 Skills
+		srvCfg.Skills = models.ConvertToolFunctions2AgentSkills(funcs)
+	} else {
+		srvCfg.Skills = []models.AgentSkill{}
+	}
+
+	return srvCfg, nil
 }

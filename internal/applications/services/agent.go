@@ -14,7 +14,7 @@ import (
 )
 
 type BaseAgentApplicationService interface {
-	Chat(dtos.AgentChatClientRequest, http.ResponseWriter)
+	Chat(dtos.ChatClientRequest, http.ResponseWriter)
 	CreatePlan(dtos.AgentPlanCreateClientRequest, http.ResponseWriter)
 	UpdatePlan(dtos.AgentPlanUpdateClientRequest, http.ResponseWriter)
 }
@@ -29,12 +29,12 @@ func NewBaseAgentApplicationService(agentDomainSvc agents.BaseAgentDomainService
 	}
 }
 
-func (s *BaseAgentApplicationServiceImpl) Chat(clientRequest dtos.AgentChatClientRequest, writer http.ResponseWriter) {
+func (s *BaseAgentApplicationServiceImpl) Chat(clientRequest dtos.ChatClientRequest, writer http.ResponseWriter) {
 	if clientRequest.ConversationId == "" {
 		clientRequest.ConversationId = uuid.New().String()
 		logger.Info("start new conversation", zap.String("conversationId", clientRequest.ConversationId))
 	}
-	request := dtos.ConvertAgentChatClientRequest2Request(clientRequest)
+	request := dtos.ConvertChatClientRequest2Request(clientRequest)
 	messageId := sse.StartChat(writer)
 	logger.Info("start new chat", zap.String("messageId", messageId))
 	defer func() {

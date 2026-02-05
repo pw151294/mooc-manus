@@ -10,6 +10,7 @@ type ToolProviderDomainService interface {
 	Update(models.ToolProviderDO) error
 	GetById(string) (models.ToolProviderDO, error)
 	GetByIds([]string) ([]models.ToolProviderDO, error)
+	GetByFunctionAndProviderIds(functionIds []string, providerIds []string) ([]models.ToolProviderDO, error)
 	DeleteById(string) error
 	Exists(string) bool
 	List() ([]models.ToolProviderDO, error)
@@ -37,6 +38,38 @@ func (t *ToolProviderDomainServiceImpl) GetByIds(ids []string) ([]models.ToolPro
 		dos = append(dos, models.ConvertToolProviderPO2DO(po))
 	}
 	return dos, nil
+}
+
+func (t *ToolProviderDomainServiceImpl) GetByFunctionAndProviderIds(functionIds []string, providerIds []string) ([]models.ToolProviderDO, error) {
+	providerIdMap := make(map[string]struct{})
+	for _, pid := range providerIds {
+		providerIdMap[pid] = struct{}{}
+	}
+
+	if len(functionIds) > 0 {
+		// 1. 根据 functionIds 查询出 functions
+		functionPOs, err := t.functionRepo.GetByIds(functionIds)
+		if err != nil {
+			return nil, err
+		}
+
+		// 2. 提取出不重复的 providerId
+		for _, po := range functionPOs {
+			providerIdMap[po.ProviderID] = struct{}{}
+		}
+	}
+
+	if len(providerIdMap) == 0 {
+		return []models.ToolProviderDO{}, nil
+	}
+
+	allProviderIds := make([]string, 0, len(providerIdMap))
+	for id := range providerIdMap {
+		allProviderIds = append(allProviderIds, id)
+	}
+
+	// 3. 根据 providerIds 查询出 providers
+	return t.GetByIds(allProviderIds)
 }
 
 func (t *ToolProviderDomainServiceImpl) GetById(id string) (models.ToolProviderDO, error) {

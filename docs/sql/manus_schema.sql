@@ -1,16 +1,16 @@
 CREATE TABLE app_config
 (
-    id                    VARCHAR(36) PRIMARY KEY,
-    base_url              VARCHAR(255)  NOT NULL,
-    api_key               VARCHAR(255)  NOT NULL,
-    model_name            VARCHAR(100)  NOT NULL,
-    temperature           DECIMAL(3, 2) NOT NULL,
-    max_tokens            INTEGER       NOT NULL,
-    max_iterations        INTEGER       NOT NULL,
-    max_retries           INTEGER       NOT NULL,
-    max_search_results    INTEGER       NOT NULL,
-    created_at            TIMESTAMPTZ   NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at            TIMESTAMPTZ   NOT NULL DEFAULT CURRENT_TIMESTAMP
+    id                 VARCHAR(36) PRIMARY KEY,
+    base_url           VARCHAR(255)  NOT NULL,
+    api_key            VARCHAR(255)  NOT NULL,
+    model_name         VARCHAR(100)  NOT NULL,
+    temperature        DECIMAL(3, 2) NOT NULL,
+    max_tokens         INTEGER       NOT NULL,
+    max_iterations     INTEGER       NOT NULL,
+    max_retries        INTEGER       NOT NULL,
+    max_search_results INTEGER       NOT NULL,
+    created_at         TIMESTAMPTZ   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at         TIMESTAMPTZ   NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 COMMENT ON TABLE app_config IS '应用配置表';
@@ -131,3 +131,23 @@ COMMENT ON COLUMN a2a_server_functions.a2a_server_config_id IS '外键，关联 
 COMMENT ON COLUMN a2a_server_functions.function_id IS '外键，关联 tool_function.id';
 COMMENT ON COLUMN a2a_server_functions.created_at IS '创建时间';
 COMMENT ON COLUMN a2a_server_functions.updated_at IS '更新时间';
+
+
+CREATE TABLE sessions
+(
+    id                   VARCHAR(255) NOT NULL DEFAULT (gen_random_uuid()::VARCHAR(255)),
+    sandbox_id           VARCHAR(255),
+    task_id              VARCHAR(255),
+    title                VARCHAR(255) NOT NULL DEFAULT ''::character varying,
+    unread_message_count INTEGER      NOT NULL DEFAULT 0,
+    latest_message       TEXT         NOT NULL DEFAULT ''::text,
+    latest_message_at    TIMESTAMP,
+    events               JSONB        NOT NULL DEFAULT '[]'::jsonb,
+    files                JSONB        NOT NULL DEFAULT '[]'::jsonb,
+    memories             JSONB        NOT NULL DEFAULT '{}'::jsonb,
+    status               VARCHAR(255) NOT NULL DEFAULT ''::character varying,
+    updated_at           TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP(0),
+    created_at           TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP(0),
+
+    CONSTRAINT pk_sessions_id PRIMARY KEY (id)
+);

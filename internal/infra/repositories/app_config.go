@@ -16,6 +16,7 @@ type AppConfigRepository interface {
 	UpdateA2AServers(configs []models.A2AServerConfigPO, functions []models.A2AServerFunctionPO) error
 	GetById(string) (models.AppConfigPO, error)
 	GetA2AServerConfigsByAppConfigId(appConfigId string) ([]models.A2AServerConfigPO, error)
+	GetA2AServerConfigById(id string) (models.A2AServerConfigPO, error)
 	GetA2AServerFunctionsByServerConfigIds(serverConfigIds []string) ([]models.A2AServerFunctionPO, error)
 	List() ([]models.AppConfigPO, error)
 	DeleteById(string) error
@@ -129,6 +130,12 @@ func (a *AppConfigRepositoryImpl) GetA2AServerConfigsByAppConfigId(appConfigId s
 	var configs []models.A2AServerConfigPO
 	err := a.client.Where("app_config_id = ?", appConfigId).Find(&configs).Error
 	return configs, err
+}
+
+func (a *AppConfigRepositoryImpl) GetA2AServerConfigById(id string) (models.A2AServerConfigPO, error) {
+	var config models.A2AServerConfigPO
+	err := a.client.Where("id = ?", id).First(&config).Error
+	return config, err
 }
 
 func (a *AppConfigRepositoryImpl) DeleteA2AServerFunctionsByServerConfigIds(serverConfigIds []string) error {

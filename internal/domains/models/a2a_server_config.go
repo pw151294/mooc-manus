@@ -2,7 +2,6 @@ package models
 
 import (
 	"encoding/json"
-	"fmt"
 	"mooc-manus/internal/infra/models"
 )
 
@@ -111,14 +110,13 @@ func ConvertA2AServerConfigDOs2POs(dos []A2AServerConfigDO) ([]models.A2AServerC
 
 func ConvertToolFunction2AgentSkill(do ToolFunctionDO) AgentSkill {
 	// Extract tags from the parameter keys
-	tags := make([]string, 0, len(do.Schema.Parameters))
-	for key := range do.Schema.Parameters {
-		tags = append(tags, key)
-	}
-
-	// Generate examples based on the parameters
-	examples := []string{
-		generateExample(do.FunctionName, do.Schema.Parameters),
+	tags := make([]string, 0)
+	if props, ok := do.Schema.Parameters["properties"]; ok {
+		if propsMap, ok := props.(map[string]any); ok {
+			for key := range propsMap {
+				tags = append(tags, key)
+			}
+		}
 	}
 
 	return AgentSkill{
@@ -126,7 +124,6 @@ func ConvertToolFunction2AgentSkill(do ToolFunctionDO) AgentSkill {
 		Name:        do.FunctionName,
 		Description: do.FunctionDesc,
 		Tags:        tags,
-		Examples:    examples,
 	}
 }
 
@@ -136,24 +133,4 @@ func ConvertToolFunctions2AgentSkills(functions []ToolFunctionDO) []AgentSkill {
 		skills = append(skills, ConvertToolFunction2AgentSkill(function))
 	}
 	return skills
-}
-
-// Helper function to generate an example call for a tool function
-func generateExample(functionName string, parameters map[string]any) string {
-	example := functionName + "("
-	for key, value := range parameters {
-		example += key + "="
-		switch v := value.(type) {
-		case string:
-			example += `"` + v + `"`
-		default:
-			example += fmt.Sprintf("%v", v)
-		}
-		example += ", "
-	}
-	if len(parameters) > 0 {
-		example = example[:len(example)-2] // Remove trailing ", "
-	}
-	example += ")"
-	return example
 }

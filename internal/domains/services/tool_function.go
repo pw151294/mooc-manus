@@ -15,6 +15,7 @@ type ToolFunctionDomainService interface {
 	DeleteById(string) error
 	GetByIds([]string) ([]models.ToolFunctionDO, error)
 	ListBy(functionIds []string, providerIds []string) ([]models.ToolFunctionDO, error)
+	GroupFuncsByProviderId(functionIds []string, providerIds []string) (map[string][]models.ToolFunctionDO, error)
 	ListByProviderId(string) ([]models.ToolFunctionDO, error)
 	List() ([]models.ToolFunctionDO, error)
 }
@@ -75,6 +76,22 @@ func (t *ToolFunctionDomainServiceImpl) AddMcpFunctions(provider models.ToolProv
 		}
 		return nil
 	})
+}
+
+func (t *ToolFunctionDomainServiceImpl) GroupFuncsByProviderId(functionIds []string, providerIds []string) (map[string][]models.ToolFunctionDO, error) {
+	// 1. 根据functionIds还有providerIds查询出所有关联到的function记录
+	dos, err := t.ListBy(functionIds, providerIds)
+	if err != nil {
+		return nil, err
+	}
+
+	// 2. 对1中查询到的function记录按照providerId分组得到最终的结果
+	groupedFuncs := make(map[string][]models.ToolFunctionDO)
+	for _, do := range dos {
+		groupedFuncs[do.ProviderID] = append(groupedFuncs[do.ProviderID], do)
+	}
+
+	return groupedFuncs, nil
 }
 
 func (t *ToolFunctionDomainServiceImpl) GetByIds(ids []string) ([]models.ToolFunctionDO, error) {

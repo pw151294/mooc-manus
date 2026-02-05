@@ -17,7 +17,7 @@ import (
 )
 
 type BaseAgentDomainService interface {
-	Chat(agents.AgentChatRequest, chan events.AgentEvent)
+	Chat(agents.ChatRequest, chan events.AgentEvent)
 	CreatePlan(agents.AgentPlanCreateRequest, chan events.AgentEvent)
 	UpdatePlan(agents.AgentPlanUpdateRequest, chan events.AgentEvent)
 }
@@ -36,7 +36,7 @@ func NewBaseAgentDomainService(appConfigDomainSvc services.AppConfigDomainServic
 	}
 }
 
-func (s *BaseAgentDomainServiceImpl) Chat(request agents.AgentChatRequest, eventCh chan events.AgentEvent) {
+func (s *BaseAgentDomainServiceImpl) Chat(request agents.ChatRequest, eventCh chan events.AgentEvent) {
 	// 先调用createAgent创建Agent智能体
 	agent, err := s.createBaseAgent(request)
 	if err != nil {
@@ -139,7 +139,7 @@ func (s *BaseAgentDomainServiceImpl) UpdatePlan(request agents.AgentPlanUpdateRe
 	close(eventCh)
 }
 
-func (s *BaseAgentDomainServiceImpl) createBaseAgent(request agents.AgentChatRequest) (*BaseAgent, error) {
+func (s *BaseAgentDomainServiceImpl) createBaseAgent(request agents.ChatRequest) (*BaseAgent, error) {
 	appConfig, err := s.appConfigDomainSvc.GetById(request.AppConfigId)
 	if err != nil {
 		return nil, err

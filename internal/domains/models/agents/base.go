@@ -1,6 +1,6 @@
 package agents
 
-type AgentChatRequest struct {
+type ChatRequest struct {
 	Streaming      bool
 	ApiKey         string
 	SystemPrompt   string
@@ -39,8 +39,8 @@ type AgentExecuteRequest struct {
 	Attachments    []string
 }
 
-func ConvertPlanCreateRequest2ChatRequest(planCreateRequest AgentPlanCreateRequest) AgentChatRequest {
-	request := AgentChatRequest{}
+func ConvertPlanCreateRequest2ChatRequest(planCreateRequest AgentPlanCreateRequest) ChatRequest {
+	request := ChatRequest{}
 	request.ApiKey = planCreateRequest.ApiKey
 	request.ConversationId = planCreateRequest.ConversationId
 	request.Query = planCreateRequest.Query
@@ -49,16 +49,16 @@ func ConvertPlanCreateRequest2ChatRequest(planCreateRequest AgentPlanCreateReque
 	return request
 }
 
-func ConvertPlanUpdateRequest2ChatRequest(planUpdateRequest AgentPlanUpdateRequest) AgentChatRequest {
-	request := AgentChatRequest{}
+func ConvertPlanUpdateRequest2ChatRequest(planUpdateRequest AgentPlanUpdateRequest) ChatRequest {
+	request := ChatRequest{}
 	request.ApiKey = planUpdateRequest.ApiKey
 	request.ConversationId = planUpdateRequest.ConversationId
 	request.AppConfigId = planUpdateRequest.AppConfigId
 	return request
 }
 
-func ConvertAgentExecuteRequest2ChatRequest(executeRequest AgentExecuteRequest) AgentChatRequest {
-	request := AgentChatRequest{}
+func ConvertAgentExecuteRequest2ChatRequest(executeRequest AgentExecuteRequest) ChatRequest {
+	request := ChatRequest{}
 	request.ApiKey = executeRequest.ApiKey
 	request.ConversationId = executeRequest.ConversationId
 	request.AppConfigId = executeRequest.AppConfigId

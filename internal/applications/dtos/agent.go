@@ -4,7 +4,7 @@ import (
 	"mooc-manus/internal/domains/models/agents"
 )
 
-type AgentChatClientRequest struct {
+type ChatClientRequest struct {
 	Streaming      bool          `json:"streaming"`
 	ApiKey         string        `json:"apiKey"`
 	SystemPrompt   string        `json:"systemPrompt"`
@@ -43,8 +43,8 @@ func convertInterfaces2Files(datas []interface{}) []agents.File {
 	return files
 }
 
-func ConvertAgentChatClientRequest2Request(clientRequest AgentChatClientRequest) agents.AgentChatRequest {
-	request := agents.AgentChatRequest{}
+func ConvertChatClientRequest2Request(clientRequest ChatClientRequest) agents.ChatRequest {
+	request := agents.ChatRequest{}
 	request.Streaming = clientRequest.Streaming
 	request.ConversationId = clientRequest.ConversationId
 	request.SystemPrompt = clientRequest.SystemPrompt
@@ -57,8 +57,8 @@ func ConvertAgentChatClientRequest2Request(clientRequest AgentChatClientRequest)
 	return request
 }
 
-func ConvertPlanCreateClientRequest2ChatRequest(clientRequest AgentPlanCreateClientRequest) agents.AgentChatRequest {
-	request := agents.AgentChatRequest{}
+func ConvertPlanCreateClientRequest2ChatRequest(clientRequest AgentPlanCreateClientRequest) agents.ChatRequest {
+	request := agents.ChatRequest{}
 	request.Streaming = true
 	request.ApiKey = clientRequest.ApiKey
 	request.ConversationId = clientRequest.ConversationId

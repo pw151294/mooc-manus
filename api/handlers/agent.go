@@ -19,7 +19,7 @@ func NewAgentHandler(baseAgentAppSvc services.BaseAgentApplicationService) *Agen
 }
 
 func (h *AgentHandler) Chat(c *gin.Context) {
-	clientRequest := dtos.AgentChatClientRequest{}
+	clientRequest := dtos.ChatClientRequest{}
 	if err := c.ShouldBindJSON(&clientRequest); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 	}
