@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/kaptinlin/jsonrepair"
 	"github.com/openai/openai-go"
 	"go.uber.org/zap"
 )
@@ -76,6 +77,22 @@ func (a *BaseAgent) InvokeToolCalls(toolCalls []openai.ChatCompletionMessageTool
 		toolCallId := toolCall.ID
 		funcName := toolCall.Function.Name
 		funcArgs := toolCall.Function.Arguments
+		// 使用jsonrepair修复funcArgs
+		repairedArgs, err := jsonrepair.JSONRepair(funcArgs)
+		if err != nil {
+			logger.Error("repair tool call args failed", zap.Error(err), zap.String("function args", funcArgs))
+			errMsg := fmt.Sprintf("工具调用参数不符合规范，修复失败：%v", err)
+			toolMessages = append(toolMessages, openai.ToolMessage(errMsg, toolCallId))
+			result := models.ToolCallResult{
+				Success: false,
+				Message: errMsg,
+			}
+			// 修复失败，发送失败事件并继续
+			eventCh <- events.OnToolCallFail(toolCall, "", &result)
+			continue
+		}
+		funcArgs = repairedArgs // 使用修复后的参数
+
 		// 查询Agent中对应的工具
 		tool := a.GetTool(funcName)
 		if tool == nil {

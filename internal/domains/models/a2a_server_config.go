@@ -5,13 +5,6 @@ import (
 	"mooc-manus/internal/infra/models"
 )
 
-const (
-	PreferredTransportExtInfoKey = "preferredTransport"
-	DefaultInputModesExtInfoKey  = "defaultInputModes"
-	DefaultOutputModesExtInfoKey = "defaultOutputModes"
-	StreamingExtInfoKey          = "streaming"
-)
-
 type A2AServerConfigDO struct {
 	ID          string
 	AppConfigID string

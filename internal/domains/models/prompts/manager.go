@@ -26,6 +26,9 @@ var executionPrompt string
 //go:embed react/summarize
 var summarizePrompt string
 
+//go:embed a2a/system.txt
+var a2aSystemPrompt string
+
 type PromptManager struct {
 	sync.Mutex
 	systemPrompt      string
@@ -35,6 +38,7 @@ type PromptManager struct {
 	reActSystemPrompt string
 	executionPrompt   string
 	summarizePrompt   string
+	a2aSystemPrompt   string
 }
 
 var pm *PromptManager
@@ -50,6 +54,7 @@ func init() {
 			reActSystemPrompt: reActSystemPrompt,
 			executionPrompt:   executionPrompt,
 			summarizePrompt:   summarizePrompt,
+			a2aSystemPrompt:   a2aSystemPrompt,
 		}
 	})
 }
@@ -94,4 +99,10 @@ func GetSummarizePrompt() string {
 	pm.Lock()
 	defer pm.Unlock()
 	return pm.summarizePrompt
+}
+
+func GetA2ASystemPrompt() string {
+	pm.Lock()
+	defer pm.Unlock()
+	return pm.a2aSystemPrompt
 }

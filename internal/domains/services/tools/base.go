@@ -14,6 +14,36 @@ type Tool interface {
 	ProviderName() string
 }
 
+func InitTools(providers []models.ToolProviderDO, proId2Funcs map[string][]models.ToolFunctionDO, srvCfgs []models.A2AServerConfigDO) ([]Tool, error) {
+	if len(providers) == 0 {
+		return nil, nil
+	}
+
+	tools := make([]Tool, 0, len(providers))
+	for _, provider := range providers {
+		proId := provider.ProviderID
+		if funcs, ok := proId2Funcs[proId]; ok {
+			var tool Tool
+			switch provider.ProviderType {
+			case "MCP":
+				tool = NewMcpTool(provider, funcs)
+			case "CUSTOM":
+				tool = NewCustomTool(provider, funcs)
+			case "A2A":
+				tool = NewA2ATool(provider, funcs, srvCfgs)
+			}
+			if tool != nil {
+				if err := tool.Init(); err != nil {
+					return nil, err
+				}
+				tools = append(tools, tool)
+			}
+		}
+	}
+
+	return tools, nil
+}
+
 type BaseTool struct {
 	providerId   string
 	providerName string

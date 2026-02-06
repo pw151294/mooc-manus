@@ -2,7 +2,6 @@ package models
 
 import (
 	"mooc-manus/internal/infra/models"
-	"mooc-manus/pkg/crypt"
 )
 
 type ModelConfig struct {
@@ -37,7 +36,7 @@ func ConvertAppConfigDO2PO(appConfigDO AppConfigDO) models.AppConfigPO {
 	return models.AppConfigPO{
 		ID:               appConfigDO.AppConfigID,
 		BaseUrl:          appConfigDO.ModelConfig.BaseUrl,
-		ApiKey:           crypt.EncodeMd5(appConfigDO.ModelConfig.ApiKey),
+		ApiKey:           appConfigDO.ModelConfig.ApiKey,
 		ModelName:        appConfigDO.ModelConfig.ModelName,
 		Temperature:      appConfigDO.ModelConfig.Temperature,
 		MaxTokens:        appConfigDO.ModelConfig.MaxTokens,
@@ -52,7 +51,7 @@ func ConvertAppConfigPO2DO(appConfigPO models.AppConfigPO) AppConfigDO {
 		AppConfigID: appConfigPO.ID,
 		ModelConfig: ModelConfig{
 			BaseUrl:     appConfigPO.BaseUrl,
-			ApiKey:      "", // 不返回敏感信息
+			ApiKey:      appConfigPO.ApiKey,
 			ModelName:   appConfigPO.ModelName,
 			Temperature: appConfigPO.Temperature,
 			MaxTokens:   appConfigPO.MaxTokens,

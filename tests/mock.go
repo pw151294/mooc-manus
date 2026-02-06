@@ -175,7 +175,7 @@ func TestMockA2ARequestContext() {
 		ContextID:    "",
 		Metadata:     nil,
 	}
-	println(reqCtx.Message.Parts[0].(*a2a.TextPart).Text) // 查询文本
+	println(reqCtx.Message.Parts[0].(a2a.TextPart).Text) // 查询文本
 
 	queue := eventqueue.NewInMemoryManager()
 	q, ok := queue.Get(context.Background(), reqCtx.TaskID)

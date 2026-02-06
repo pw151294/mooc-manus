@@ -1,8 +1,6 @@
 package events
 
 import (
-	"encoding/json"
-	"log"
 	"mooc-manus/internal/domains/models"
 	"time"
 
@@ -16,7 +14,7 @@ type ToolEvent struct {
 	ToolCallID     string                 `json:"tool_call_id"`    // 工具调用ID
 	ToolName       string                 `json:"tool_name"`       // 工具集(provider)名称
 	FunctionName   string                 `json:"function_name"`   // LLM调用的函数名称
-	FunctionArgs   map[string]interface{} `json:"function_args"`   // LLM生成的工具调用参数
+	FunctionArgs   string                 `json:"function_args"`   // LLM生成的工具调用参数
 	FunctionResult *models.ToolCallResult `json:"function_result"` // 工具调用结果
 	Status         ToolEventStatus        `json:"status"`          // 工具调用状态
 	// todo ToolContent    ToolContent            `json:"tool_content"`    // 工具扩展内容
@@ -31,11 +29,6 @@ type McpToolContent struct {
 }
 
 func convert2ToolEvent(toolCall openai.ChatCompletionMessageToolCall, toolName string) ToolEvent {
-	funcArgs := make(map[string]any)
-	if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &funcArgs); err != nil {
-		log.Printf("工具调用参数不符合规范：%v", err)
-	}
-
 	toolEvent := ToolEvent{}
 	toolEvent.ID = uuid.New().String()
 	toolEvent.CreatedAt = time.Now()
@@ -43,7 +36,7 @@ func convert2ToolEvent(toolCall openai.ChatCompletionMessageToolCall, toolName s
 	toolEvent.ToolCallID = toolCall.ID
 	toolEvent.ToolName = toolName
 	toolEvent.FunctionName = toolCall.Function.Name
-	toolEvent.FunctionArgs = funcArgs
+	toolEvent.FunctionArgs = toolCall.Function.Arguments
 
 	return toolEvent
 }

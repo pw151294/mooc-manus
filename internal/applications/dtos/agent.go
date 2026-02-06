@@ -48,7 +48,6 @@ func ConvertChatClientRequest2Request(clientRequest ChatClientRequest) agents.Ch
 	request.Streaming = clientRequest.Streaming
 	request.ConversationId = clientRequest.ConversationId
 	request.SystemPrompt = clientRequest.SystemPrompt
-	request.ApiKey = clientRequest.ApiKey
 	request.Query = clientRequest.Query
 	request.AppConfigId = clientRequest.AppConfigId
 	request.FunctionIds = clientRequest.FunctionIds
@@ -60,7 +59,6 @@ func ConvertChatClientRequest2Request(clientRequest ChatClientRequest) agents.Ch
 func ConvertPlanCreateClientRequest2ChatRequest(clientRequest AgentPlanCreateClientRequest) agents.ChatRequest {
 	request := agents.ChatRequest{}
 	request.Streaming = true
-	request.ApiKey = clientRequest.ApiKey
 	request.ConversationId = clientRequest.ConversationId
 	request.Query = clientRequest.Query
 	request.AppConfigId = clientRequest.AppConfigId
@@ -71,7 +69,6 @@ func ConvertPlanCreateClientRequest2ChatRequest(clientRequest AgentPlanCreateCli
 func ConvertPlanCreateClientRequest2DORequest(clientRequest AgentPlanCreateClientRequest) agents.AgentPlanCreateRequest {
 	request := agents.AgentPlanCreateRequest{}
 	request.Query = clientRequest.Query
-	request.ApiKey = clientRequest.ApiKey
 	request.ConversationId = clientRequest.ConversationId
 	request.AppConfigId = clientRequest.AppConfigId
 	request.Files = convertInterfaces2Files(clientRequest.Files)
@@ -81,7 +78,6 @@ func ConvertPlanCreateClientRequest2DORequest(clientRequest AgentPlanCreateClien
 
 func ConvertPlanUpdateClientRequest2DORequest(clientRequest AgentPlanUpdateClientRequest) agents.AgentPlanUpdateRequest {
 	request := agents.AgentPlanUpdateRequest{}
-	request.ApiKey = clientRequest.ApiKey
 	request.ConversationId = clientRequest.ConversationId
 	request.AppConfigId = clientRequest.AppConfigId
 	request.PlanId = clientRequest.PlanId

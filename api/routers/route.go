@@ -25,16 +25,18 @@ func InitRouter() *gin.Engine {
 	functionDomainSvc := domain_svc.NewToolFunctionDomainService(functionRepo, providerRepo)
 	appConfigDomainSvc := domain_svc.NewAppConfigDomainService(appConfigRepo, functionDomainSvc)
 	baseAgentDomainSvc := agents.NewBaseAgentDomainService(appConfigDomainSvc, providerDomainSvc, functionDomainSvc)
+	a2aDomainSvc := agents.NewA2ADomainService(baseAgentDomainSvc, appConfigDomainSvc, providerDomainSvc, functionDomainSvc)
 
 	// Initialize application services
 	appConfigAppSvc := app_svc.NewAppConfigApplicationService(appConfigDomainSvc)
 	providerAppSvc := app_svc.NewToolProviderApplicationService(providerDomainSvc)
 	functionAppSvc := app_svc.NewTooLFunctionApplicationService(functionDomainSvc)
 	baseAgentAppSvc := app_svc.NewBaseAgentApplicationService(baseAgentDomainSvc)
+	a2aAppSvc := app_svc.NewA2AApplicationService(a2aDomainSvc)
 
 	// Initialize handlers
 	toolHandler := handlers.NewToolHandler(providerAppSvc, functionAppSvc)
-	agentHandler := handlers.NewAgentHandler(baseAgentAppSvc)
+	agentHandler := handlers.NewAgentHandler(baseAgentAppSvc, a2aAppSvc)
 
 	status := r.Group("/api")
 	{
@@ -78,6 +80,7 @@ func InitRouter() *gin.Engine {
 	agent := r.Group("/api/agent")
 	{
 		agent.POST("/chat", agentHandler.Chat)
+		agent.POST("/a2a/chat", agentHandler.A2AChat)
 		agent.POST("/plan/create", agentHandler.CreatePlan)
 		agent.POST("/plan/update", agentHandler.UpdatePlan)
 	}
