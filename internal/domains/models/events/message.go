@@ -1,21 +1,13 @@
 package events
 
 import (
-	"mooc-manus/internal/domains/models/agents"
+	"mooc-manus/internal/domains/models"
 	"time"
 
 	"github.com/google/uuid"
 )
 
-type MessageEvent struct {
-	BaseEvent
-	Timestamp   time.Time     `json:"timestamp"`
-	Role        string        `json:"role"`        // 消息角色: "user" 或 "assistant"
-	Message     string        `json:"message"`     // 消息本身
-	Attachments []agents.File `json:"attachments"` // 附件列表信息
-}
-
-func OnMessage(content string, attachments []agents.File) AgentEvent {
+func OnMessage(content string, attachments []models.File) AgentEvent {
 	messageEvent := MessageEvent{}
 	messageEvent.ID = uuid.New().String()
 	messageEvent.Type = EventTypeMessage

@@ -8,26 +8,6 @@ import (
 	"github.com/openai/openai-go"
 )
 
-type ToolEvent struct {
-	BaseEvent
-	Timestamp      time.Time              `json:"timestamp"`
-	ToolCallID     string                 `json:"tool_call_id"`    // 工具调用ID
-	ToolName       string                 `json:"tool_name"`       // 工具集(provider)名称
-	FunctionName   string                 `json:"function_name"`   // LLM调用的函数名称
-	FunctionArgs   string                 `json:"function_args"`   // LLM生成的工具调用参数
-	FunctionResult *models.ToolCallResult `json:"function_result"` // 工具调用结果
-	Status         ToolEventStatus        `json:"status"`          // 工具调用状态
-	// todo ToolContent    ToolContent            `json:"tool_content"`    // 工具扩展内容
-}
-
-type BrowserToolContent struct {
-	Screenshot string `json:"screenshot"` // 浏览器快照截图
-}
-
-type McpToolContent struct {
-	Result interface{} `json:"result"` // 任意类型的结果
-}
-
 func convert2ToolEvent(toolCall openai.ChatCompletionMessageToolCall, toolName string) ToolEvent {
 	toolEvent := ToolEvent{}
 	toolEvent.ID = uuid.New().String()

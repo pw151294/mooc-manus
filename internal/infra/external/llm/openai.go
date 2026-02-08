@@ -2,8 +2,8 @@ package llm
 
 import (
 	"context"
-	"mooc-manus/internal/domains/events"
 	"mooc-manus/internal/domains/models"
+	"mooc-manus/internal/domains/models/events"
 	"mooc-manus/pkg/logger"
 	"time"
 

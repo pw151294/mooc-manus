@@ -1,7 +1,7 @@
 package sse
 
 import (
-	"mooc-manus/internal/domains/events"
+	"mooc-manus/internal/domains/models/events"
 	"mooc-manus/pkg/logger"
 	"net/http"
 	"sync"

@@ -1,4 +1,4 @@
-package agents
+package models
 
 import "github.com/openai/openai-go"
 

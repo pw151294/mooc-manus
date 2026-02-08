@@ -1,6 +1,7 @@
 package dtos
 
 import (
+	"mooc-manus/internal/domains/models"
 	"mooc-manus/internal/domains/models/agents"
 )
 
@@ -32,10 +33,10 @@ type AgentPlanUpdateClientRequest struct {
 	StepId         string `json:"stepId"`
 }
 
-func convertInterfaces2Files(datas []interface{}) []agents.File {
-	files := make([]agents.File, 0, len(datas))
+func convertInterfaces2Files(datas []interface{}) []models.File {
+	files := make([]models.File, 0, len(datas))
 	for _, data := range datas {
-		file, ok := data.(agents.File)
+		file, ok := data.(models.File)
 		if ok {
 			files = append(files, file)
 		}

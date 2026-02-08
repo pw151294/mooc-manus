@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"mooc-manus/internal/domains/events"
+	"mooc-manus/internal/domains/models/events"
 	"mooc-manus/pkg/logger"
 	"sync"
 

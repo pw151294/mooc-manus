@@ -3,8 +3,9 @@ package agents
 import (
 	"encoding/json"
 	"fmt"
-	"mooc-manus/internal/domains/events"
+	"mooc-manus/internal/domains/models"
 	"mooc-manus/internal/domains/models/agents"
+	"mooc-manus/internal/domains/models/events"
 	"mooc-manus/internal/domains/models/prompts"
 	"mooc-manus/internal/domains/models/prompts/plans"
 	"mooc-manus/pkg/logger"
@@ -38,7 +39,7 @@ func NewPlanAgent(baseAgent *BaseAgent) *PlanAgent {
 	return agent
 }
 
-func (pa *PlanAgent) CreatePlan(message string, files []agents.File, eventCh chan<- events.AgentEvent) {
+func (pa *PlanAgent) CreatePlan(message string, files []models.File, eventCh chan<- events.AgentEvent) {
 	// 根据用户的提问拼装规划智能体的提示词
 	attachments := make([]string, 0, len(files))
 	for _, file := range files {

@@ -151,3 +151,19 @@ CREATE TABLE sessions
 
     CONSTRAINT pk_sessions_id PRIMARY KEY (id)
 );
+
+
+CREATE TABLE files
+(
+    id         VARCHAR(255)                NOT NULL DEFAULT (uuid_generate_v4()::VARCHAR(255)),
+    filename   VARCHAR(255)                NOT NULL DEFAULT ''::character varying,
+    filepath   VARCHAR(255)                NOT NULL DEFAULT ''::character varying,
+    key        VARCHAR(255)                NOT NULL DEFAULT ''::character varying,
+    extension  VARCHAR(255)                NOT NULL DEFAULT ''::character varying,
+    mime_type  VARCHAR(255)                NOT NULL DEFAULT ''::character varying,
+    size       INTEGER                     NOT NULL DEFAULT 0,
+    updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP(0),
+    created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP(0),
+
+    CONSTRAINT pk_files_id PRIMARY KEY (id)
+);

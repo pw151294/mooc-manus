@@ -1,8 +1,6 @@
 package events
 
-import (
-	"time"
-)
+import "time"
 
 type AgentEvent interface {
 	EventId() string

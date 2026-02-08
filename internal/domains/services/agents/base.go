@@ -3,8 +3,8 @@ package agents
 import (
 	"errors"
 	"fmt"
-	"mooc-manus/internal/domains/events"
 	"mooc-manus/internal/domains/models"
+	"mooc-manus/internal/domains/models/events"
 	"mooc-manus/internal/domains/models/memory"
 	"mooc-manus/internal/domains/services/tools"
 	"mooc-manus/internal/infra/external/llm"

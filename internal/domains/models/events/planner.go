@@ -8,20 +8,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// PlanEvent 规划事件类型
-type PlanEvent struct {
-	BaseEvent
-	Plan   agents.Plan     `json:"plan"`   // 规划信息
-	Status PlanEventStatus `json:"status"` // 规划事件状态
-}
-
-// StepEvent 子任务/步骤事件
-type StepEvent struct {
-	BaseEvent
-	Step   agents.Step     `json:"step"`   // 步骤信息
-	Status StepEventStatus `json:"status"` // 步骤执行的状态
-}
-
 func OnPlanCreateSuccess(plan agents.Plan) *PlanEvent {
 	ev := PlanEvent{}
 	ev.ID = uuid.New().String()

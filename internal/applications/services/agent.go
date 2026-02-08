@@ -2,9 +2,9 @@ package services
 
 import (
 	"mooc-manus/internal/applications/dtos"
-	"mooc-manus/internal/domains/events"
+	"mooc-manus/internal/domains/models/events"
 	"mooc-manus/internal/domains/services/agents"
-	"mooc-manus/internal/infra/sse"
+	"mooc-manus/internal/infra/external/sse"
 	"mooc-manus/pkg/logger"
 	"net/http"
 	"sync"
