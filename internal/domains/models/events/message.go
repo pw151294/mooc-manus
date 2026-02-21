@@ -1,13 +1,13 @@
 package events
 
 import (
-	"mooc-manus/internal/domains/models"
+	"mooc-manus/internal/domains/models/file"
 	"time"
 
 	"github.com/google/uuid"
 )
 
-func OnMessage(content string, attachments []models.File) AgentEvent {
+func OnMessage(content string, attachments []file.File) AgentEvent {
 	messageEvent := MessageEvent{}
 	messageEvent.ID = uuid.New().String()
 	messageEvent.Type = EventTypeMessage

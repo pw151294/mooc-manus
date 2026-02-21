@@ -14,6 +14,15 @@ func OnWait() AgentEvent {
 	return &event
 }
 
+func OnTitle(title string) AgentEvent {
+	event := TitleEvent{}
+	event.ID = uuid.New().String()
+	event.Type = EventTypeTitle
+	event.Title = title
+	event.CreatedAt = time.Now()
+	return &event
+}
+
 func OnError(errorMsg string) AgentEvent {
 	errorEvent := ErrorEvent{}
 	errorEvent.ID = uuid.New().String()

@@ -65,6 +65,9 @@ func MockOpenAiMessage() {
 		},
 	}
 	println(messageParamUnion)
+	println(messageParamUnion.GetToolCalls())
+	println(messageParamUnion.GetContent())
+	println(messageParamUnion.OfTool.Content.OfString.String())
 
 	params := openai.ChatCompletionNewParams{
 		Messages: nil,

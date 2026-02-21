@@ -14,6 +14,7 @@ const (
 	EventTypePlanCreateSuccess = "plan_create_success"
 	EventTypePlanUpdateSuccess = "plan_update_success"
 	EventTypePlanUpdateFailed  = "plan_update_failed"
+	EventTypePlanCompleted     = "plan_completed"
 	EventTypeStepStart         = "step_start"
 	EventTypeStepComplete      = "step_complete"
 	EventTypeStepFail          = "step_fail"
@@ -31,9 +32,10 @@ const (
 type PlanEventStatus string
 
 const (
-	PlanCreated PlanEventStatus = "created" // 已创建
-	PlanUpdated PlanEventStatus = "updated" // 已更新
-	PlanFailed  PlanEventStatus = "failed"  // 已完成
+	PlanCreated   PlanEventStatus = "created"   // 已创建
+	PlanUpdated   PlanEventStatus = "updated"   // 已更新
+	PlanFailed    PlanEventStatus = "failed"    // 已完成
+	PlanCompleted PlanEventStatus = "completed" // 已完成
 )
 
 // StepEventStatus 步骤事件状态

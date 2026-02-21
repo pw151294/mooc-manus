@@ -6,6 +6,7 @@ import (
 	app_svc "mooc-manus/internal/applications/services"
 	domain_svc "mooc-manus/internal/domains/services"
 	"mooc-manus/internal/domains/services/agents"
+	"mooc-manus/internal/domains/services/flows"
 	"mooc-manus/internal/infra/external/health_checker"
 	"mooc-manus/internal/infra/repositories"
 
@@ -26,6 +27,7 @@ func InitRouter() *gin.Engine {
 	appConfigDomainSvc := domain_svc.NewAppConfigDomainService(appConfigRepo, functionDomainSvc)
 	baseAgentDomainSvc := agents.NewBaseAgentDomainService(appConfigDomainSvc, providerDomainSvc, functionDomainSvc)
 	a2aDomainSvc := agents.NewA2ADomainService(baseAgentDomainSvc, appConfigDomainSvc, providerDomainSvc, functionDomainSvc)
+	baseFlowDomainSvc := flows.NewBaseFlowDomainService(appConfigDomainSvc, providerDomainSvc, functionDomainSvc)
 
 	// Initialize application services
 	appConfigAppSvc := app_svc.NewAppConfigApplicationService(appConfigDomainSvc)
@@ -33,10 +35,12 @@ func InitRouter() *gin.Engine {
 	functionAppSvc := app_svc.NewTooLFunctionApplicationService(functionDomainSvc)
 	baseAgentAppSvc := app_svc.NewBaseAgentApplicationService(baseAgentDomainSvc)
 	a2aAppSvc := app_svc.NewA2AApplicationService(a2aDomainSvc)
+	baseFlowAppSvc := app_svc.NewFlowApplicationService(baseFlowDomainSvc)
 
 	// Initialize handlers
 	toolHandler := handlers.NewToolHandler(providerAppSvc, functionAppSvc)
 	agentHandler := handlers.NewAgentHandler(baseAgentAppSvc, a2aAppSvc)
+	flowHandler := handlers.NewFlowHandler(baseFlowAppSvc)
 
 	status := r.Group("/api")
 	{
@@ -83,6 +87,11 @@ func InitRouter() *gin.Engine {
 		agent.POST("/a2a/chat", agentHandler.A2AChat)
 		agent.POST("/plan/create", agentHandler.CreatePlan)
 		agent.POST("/plan/update", agentHandler.UpdatePlan)
+	}
+
+	flow := r.Group("/api/flow")
+	{
+		flow.POST("/run", flowHandler.Run)
 	}
 
 	return r

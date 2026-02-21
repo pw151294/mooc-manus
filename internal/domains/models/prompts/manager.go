@@ -11,7 +11,7 @@ var systemPrompt string
 //go:embed plans/plan_system
 var planSystemPrompt string
 
-//go:embed plans/plan_create
+//go:embed plans/plan_create.txt
 var planCreatePrompt string
 
 //go:embed plans/plan_update

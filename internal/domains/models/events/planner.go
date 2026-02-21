@@ -38,6 +38,16 @@ func OnPlanUpdateFailed(plan agents.Plan) *PlanEvent {
 	return &ev
 }
 
+func OnPlanComplete(plan agents.Plan) *PlanEvent {
+	ev := PlanEvent{}
+	ev.ID = uuid.New().String()
+	ev.Type = EventTypePlanCompleted
+	ev.CreatedAt = time.Now()
+	ev.Plan = plan
+	ev.Status = PlanCompleted
+	return &ev
+}
+
 func OnStepStart(step agents.Step) *StepEvent {
 	ev := StepEvent{}
 	ev.ID = uuid.New().String()

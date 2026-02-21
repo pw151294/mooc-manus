@@ -1,6 +1,8 @@
 package agents
 
-import "mooc-manus/internal/domains/models"
+import (
+	"mooc-manus/internal/domains/models/file"
+)
 
 type ChatRequest struct {
 	Streaming      bool
@@ -10,14 +12,14 @@ type ChatRequest struct {
 	AppConfigId    string
 	FunctionIds    []string
 	ProviderIds    []string
-	Files          []models.File
+	Files          []file.File
 }
 
 type AgentPlanCreateRequest struct {
 	ConversationId string
 	Query          string
 	AppConfigId    string
-	Files          []models.File
+	Files          []file.File
 }
 
 type AgentPlanUpdateRequest struct {

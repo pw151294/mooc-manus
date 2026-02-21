@@ -10,10 +10,10 @@ import (
 type ExecutionStatus string
 
 const (
-	Pending   ExecutionStatus = "PENDING"   // 空闲或者等待中
-	Running   ExecutionStatus = "RUNNING"   // 执行中
-	Completed ExecutionStatus = "COMPLETED" // 执行完成
-	Failed    ExecutionStatus = "FAILED"    // 执行失败
+	ExecuteStatusPending   ExecutionStatus = "PENDING"   // 空闲或者等待中
+	ExecuteStatusRunning   ExecutionStatus = "RUNNING"   // 执行中
+	ExecuteStatusCompleted ExecutionStatus = "COMPLETED" // 执行完成
+	ExecuteStatusFailed    ExecutionStatus = "FAILED"    // 执行失败
 )
 
 type Step struct {
@@ -48,10 +48,10 @@ func ConvertMessage2Plan(message string) (Plan, error) {
 	}
 
 	plan.ID = uuid.New().String()
-	plan.Status = Pending
+	plan.Status = ExecuteStatusPending
 	for i := range plan.Steps {
 		plan.Steps[i].ID = uuid.New().String()
-		plan.Steps[i].Status = Pending
+		plan.Steps[i].Status = ExecuteStatusPending
 		plan.Steps[i].Success = false
 	}
 
@@ -69,7 +69,7 @@ func ConvertMessage2UpdatedPlan(message string) (Plan, error) {
 	}
 	for i := range updatedPlan.Steps {
 		updatedPlan.Steps[i].ID = uuid.New().String()
-		updatedPlan.Steps[i].Status = Pending // 新计划必然是未执行的
+		updatedPlan.Steps[i].Status = ExecuteStatusPending // 新计划必然是未执行的
 		updatedPlan.Steps[i].Success = false
 	}
 	return updatedPlan, nil

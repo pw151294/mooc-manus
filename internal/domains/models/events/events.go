@@ -3,15 +3,16 @@ package events
 import (
 	"mooc-manus/internal/domains/models"
 	"mooc-manus/internal/domains/models/agents"
+	"mooc-manus/internal/domains/models/file"
 	"time"
 )
 
 type MessageEvent struct {
 	BaseEvent
-	Timestamp   time.Time     `json:"timestamp"`
-	Role        string        `json:"role"`        // 消息角色: "user" 或 "assistant"
-	Message     string        `json:"message"`     // 消息本身
-	Attachments []models.File `json:"attachments"` // 附件列表信息
+	Timestamp   time.Time   `json:"timestamp"`
+	Role        string      `json:"role"`        // 消息角色: "user" 或 "assistant"
+	Message     string      `json:"message"`     // 消息本身
+	Attachments []file.File `json:"attachments"` // 附件列表信息
 }
 
 // PlanEvent 规划事件类型

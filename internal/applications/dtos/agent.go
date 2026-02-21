@@ -1,8 +1,8 @@
 package dtos
 
 import (
-	"mooc-manus/internal/domains/models"
 	"mooc-manus/internal/domains/models/agents"
+	"mooc-manus/internal/domains/models/file"
 )
 
 type ChatClientRequest struct {
@@ -14,7 +14,7 @@ type ChatClientRequest struct {
 	AppConfigId    string        `json:"appConfigId"`
 	FunctionIds    []string      `json:"functionIds"`
 	ProviderIds    []string      `json:"providerIds"`
-	Files          []interface{} `json:"files"`
+	Files          []interface{} `json:"file"`
 }
 
 type AgentPlanCreateClientRequest struct {
@@ -22,7 +22,7 @@ type AgentPlanCreateClientRequest struct {
 	ConversationId string        `json:"conversationId"`
 	Query          string        `json:"query"`
 	AppConfigId    string        `json:"appConfigId"`
-	Files          []interface{} `json:"files"`
+	Files          []interface{} `json:"file"`
 }
 
 type AgentPlanUpdateClientRequest struct {
@@ -33,12 +33,12 @@ type AgentPlanUpdateClientRequest struct {
 	StepId         string `json:"stepId"`
 }
 
-func convertInterfaces2Files(datas []interface{}) []models.File {
-	files := make([]models.File, 0, len(datas))
+func convertInterfaces2Files(datas []interface{}) []file.File {
+	files := make([]file.File, 0, len(datas))
 	for _, data := range datas {
-		file, ok := data.(models.File)
+		f, ok := data.(file.File)
 		if ok {
-			files = append(files, file)
+			files = append(files, f)
 		}
 	}
 	return files

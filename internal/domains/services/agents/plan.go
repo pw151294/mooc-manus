@@ -3,9 +3,9 @@ package agents
 import (
 	"encoding/json"
 	"fmt"
-	"mooc-manus/internal/domains/models"
 	"mooc-manus/internal/domains/models/agents"
 	"mooc-manus/internal/domains/models/events"
+	"mooc-manus/internal/domains/models/file"
 	"mooc-manus/internal/domains/models/prompts"
 	"mooc-manus/internal/domains/models/prompts/plans"
 	"mooc-manus/pkg/logger"
@@ -39,7 +39,7 @@ func NewPlanAgent(baseAgent *BaseAgent) *PlanAgent {
 	return agent
 }
 
-func (pa *PlanAgent) CreatePlan(message string, files []models.File, eventCh chan<- events.AgentEvent) {
+func (pa *PlanAgent) CreatePlan(message string, files []file.File, eventCh chan<- events.AgentEvent) {
 	// 根据用户的提问拼装规划智能体的提示词
 	attachments := make([]string, 0, len(files))
 	for _, file := range files {
@@ -116,7 +116,7 @@ func (pa *PlanAgent) UpdatePlan(plan agents.Plan, step agents.Step, eventCh chan
 			copy(newSteps, updatedPlan.Steps)
 
 			// 查询旧计划中第一个未完成的计划
-			pendingStatus := []agents.ExecutionStatus{agents.Pending, agents.Running}
+			pendingStatus := []agents.ExecutionStatus{agents.ExecuteStatusPending, agents.ExecuteStatusRunning}
 			firstPendingIdx := -1
 			for idx, stp := range plan.Steps {
 				if slices.Contains(pendingStatus, stp.Status) {
