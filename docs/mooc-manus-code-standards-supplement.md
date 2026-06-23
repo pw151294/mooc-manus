@@ -1,6 +1,6 @@
 # mooc-manus 代码规范调研报告 - 补充材料
 
-> 本文档包含主报告审查后需要补充的施工细节（DDL 草案、常量清单、路由骨架），对应审查意见中的 major 级别问题 #6/#7/#8/#9 的修复。施工时请配合主报告 `mooc-manus-code-standards.md` 使用。
+> 本文档包含主报告审查后需要补充的施工细节（DDL 草案、常量清单、路由骨架、Handler 单文件封装规则），对应审查意见中的 major 级别问题 #6/#7/#8 的修复。施工时请配合主报告 `mooc-manus-code-standards.md` 使用。
 
 ---
 
@@ -218,7 +218,7 @@ const (
 
 **用途**：在 `api/routers/route.go` 的 `InitRouter()` 函数末尾追加，作为阶段 7 施工蓝图。
 
-**说明**：包含完整 DI 链路（4 Repo → 4 DomainSvc → 4 AppSvc → 4 Handler）+ 3 个路由分组 + form-data 处理 + SSE 范式。
+**说明**：包含完整 DI 链路（4 Repo → 4 DomainSvc → 4 AppSvc → 1 Handler）+ 4 个路由分组 + form-data 处理 + SSE 范式。**所有 27 个接口集中在单一 `SkillHandler` 内**，由 `api/handlers/skill.go` 单文件维护。
 
 ```go
 // ========================================
@@ -246,16 +246,13 @@ skillAppSvc := app_svc.NewSkillApplicationService(skillDomainSvc)
 skillVersionAppSvc := app_svc.NewSkillVersionApplicationService(skillVersionDomainSvc)
 skillImportTaskAppSvc := app_svc.NewSkillImportTaskApplicationService(skillImportTaskDomainSvc)
 
-// 5) Handler
-skillHandler := handlers.NewSkillHandler(skillAppSvc)
-skillProviderHandler := handlers.NewSkillProviderHandler(skillProviderAppSvc, skillImportTaskAppSvc)
-skillVersionHandler := handlers.NewSkillVersionHandler(skillVersionAppSvc)
-skillImportTaskHandler := handlers.NewSkillImportTaskHandler(skillImportTaskAppSvc)
+// 5) Handler（单一 SkillHandler 持有 4 个 ApplicationService）
+skillHandler := handlers.NewSkillHandler(skillAppSvc, skillProviderAppSvc, skillVersionAppSvc, skillImportTaskAppSvc)
 
-// 6) 路由分组
+// 6) 路由分组（全部由同一个 skillHandler 承载）
 skill := r.Group("/api/v1/skill")
 {
-	// Skill 9 个接口
+	// Skill 子域 9 个接口
 	skill.POST("/draft/save", skillHandler.DraftSave)                // form-data
 	skill.POST("/publish", skillHandler.Publish)                     // form-data
 	skill.POST("/update", skillHandler.Update)
@@ -269,35 +266,61 @@ skill := r.Group("/api/v1/skill")
 
 skillProvider := r.Group("/api/v1/skill/provider")
 {
-	// Provider 7 个接口
-	skillProvider.POST("/import/git", skillProviderHandler.ImportGit)
-	skillProvider.POST("/import/zip", skillProviderHandler.ImportZip)           // form-data
-	skillProvider.POST("/import/zip/legacy", skillProviderHandler.ImportZipLegacy) // form-data
-	skillProvider.POST("/sync", skillProviderHandler.Sync)
-	skillProvider.POST("/delete", skillProviderHandler.Delete)
-	skillProvider.POST("/list", skillProviderHandler.List)
-	skillProvider.POST("/detail", skillProviderHandler.Detail)
+	// Provider 子域 7 个接口（method 加 Provider 前缀避免与 Skill 子域同名）
+	skillProvider.POST("/import/git", skillHandler.ProviderImportGit)
+	skillProvider.POST("/import/zip", skillHandler.ProviderImportZip)               // form-data
+	skillProvider.POST("/import/zip/legacy", skillHandler.ProviderImportZipLegacy)  // form-data
+	skillProvider.POST("/sync", skillHandler.ProviderSync)
+	skillProvider.POST("/delete", skillHandler.ProviderDelete)
+	skillProvider.POST("/list", skillHandler.ProviderList)
+	skillProvider.POST("/detail", skillHandler.ProviderDetail)
 }
 
 skillImportTask := r.Group("/api/v1/skill/provider/import/task")
 {
-	// 导入任务 3 个接口
-	skillImportTask.POST("/detail", skillImportTaskHandler.Detail)   // SSE 订阅
-	skillImportTask.POST("/list", skillImportTaskHandler.List)
-	skillImportTask.POST("/delete", skillImportTaskHandler.Delete)
+	// 导入任务子域 3 个接口（method 加 ImportTask 前缀）
+	skillImportTask.POST("/detail", skillHandler.ImportTaskDetail)   // SSE 订阅
+	skillImportTask.POST("/list", skillHandler.ImportTaskList)
+	skillImportTask.POST("/delete", skillHandler.ImportTaskDelete)
 }
 
 skillVersion := r.Group("/api/v1/skill/version")
 {
-	// Version 8 个接口
-	skillVersion.POST("/create", skillVersionHandler.Create)
-	skillVersion.POST("/validate", skillVersionHandler.Validate)
-	skillVersion.POST("/delete", skillVersionHandler.Delete)
-	skillVersion.POST("/list", skillVersionHandler.List)
-	skillVersion.POST("/detail", skillVersionHandler.Detail)
-	skillVersion.POST("/latest", skillVersionHandler.Latest)
-	skillVersion.POST("/rollback", skillVersionHandler.Rollback)
-	skillVersion.POST("/export", skillVersionHandler.Export)          // ZIP 流式下载
+	// Version 子域 8 个接口（method 加 Version 前缀）
+	skillVersion.POST("/create", skillHandler.VersionCreate)
+	skillVersion.POST("/validate", skillHandler.VersionValidate)
+	skillVersion.POST("/delete", skillHandler.VersionDelete)
+	skillVersion.POST("/list", skillHandler.VersionList)
+	skillVersion.POST("/detail", skillHandler.VersionDetail)
+	skillVersion.POST("/latest", skillHandler.VersionLatest)
+	skillVersion.POST("/rollback", skillHandler.VersionRollback)
+	skillVersion.POST("/export", skillHandler.VersionExport)          // ZIP 流式下载
+}
+```
+
+### SkillHandler 结构体定义
+
+```go
+// api/handlers/skill.go
+type SkillHandler struct {
+	skillAppSvc            services.SkillApplicationService
+	skillProviderAppSvc    services.SkillProviderApplicationService
+	skillVersionAppSvc     services.SkillVersionApplicationService
+	skillImportTaskAppSvc  services.SkillImportTaskApplicationService
+}
+
+func NewSkillHandler(
+	skillAppSvc services.SkillApplicationService,
+	skillProviderAppSvc services.SkillProviderApplicationService,
+	skillVersionAppSvc services.SkillVersionApplicationService,
+	skillImportTaskAppSvc services.SkillImportTaskApplicationService,
+) *SkillHandler {
+	return &SkillHandler{
+		skillAppSvc:           skillAppSvc,
+		skillProviderAppSvc:   skillProviderAppSvc,
+		skillVersionAppSvc:    skillVersionAppSvc,
+		skillImportTaskAppSvc: skillImportTaskAppSvc,
+	}
 }
 ```
 
@@ -340,7 +363,7 @@ func (h *SkillHandler) DraftSave(c *gin.Context) {
 导入任务详情接口（`/skill/provider/import/task/detail`）采用 SSE 长连接，Handler 内复用 `sse.EventHandleProtocol`：
 
 ```go
-func (h *SkillImportTaskHandler) Detail(c *gin.Context) {
+func (h *SkillHandler) ImportTaskDetail(c *gin.Context) {
 	var req dtos.SkillImportTaskDetailRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -364,22 +387,39 @@ func (h *SkillImportTaskHandler) Detail(c *gin.Context) {
 
 ---
 
-## 补充 4：Handler 文件拆分明确
+## 补充 4：Handler 单文件统一封装
 
-主报告 §4.1 阶段 7 已更新为 4 个 Handler 文件（对应审查意见 #9）：
+主报告 §4.1 阶段 7 已更新为**单一 Handler 文件**承载全部 27 个接口：
 
 ```
 api/handlers/
-  ├ skill.go               // SkillHandler（9 个接口）
-  ├ skill_provider.go      // SkillProviderHandler（7 个接口：Import/Sync/Delete/List/Detail）
-  ├ skill_import_task.go   // SkillImportTaskHandler（3 个接口：任务订阅 SSE / List / Delete）
-  └ skill_version.go       // SkillVersionHandler（8 个接口，含 1 个 GET 下载）
+  └ skill.go               // SkillHandler（统一封装 27 个接口）
 ```
 
-**3 个导入任务接口**单独建文件 `skill_import_task.go` 的原因：
-1. SSE 长连接机制特殊（emitter map 管理、并发安全、关闭语义）
-2. 与 Provider 的 CRUD 职责不同（任务是异步流程观测，Provider 是资源管理）
-3. 便于未来其他模块复用异步任务范式
+**Method 命名规则**（按业务子域加前缀，避免同名冲突）：
+
+| 子域 | 接口数 | Method 前缀 | 示例 |
+|------|--------|------------|------|
+| Skill | 9 | 无前缀 | `DraftSave / Publish / Update / Delete / List / ListAll / Detail / WithVersion / FileDownload` |
+| Provider | 7 | `Provider` | `ProviderImportGit / ProviderImportZip / ProviderImportZipLegacy / ProviderSync / ProviderDelete / ProviderList / ProviderDetail` |
+| ImportTask | 3 | `ImportTask` | `ImportTaskDetail / ImportTaskList / ImportTaskDelete` |
+| Version | 8 | `Version` | `VersionCreate / VersionValidate / VersionDelete / VersionList / VersionDetail / VersionLatest / VersionRollback / VersionExport` |
+
+**SkillHandler 依赖**：持有 4 个 ApplicationService：
+
+```go
+type SkillHandler struct {
+    skillAppSvc            services.SkillApplicationService
+    skillProviderAppSvc    services.SkillProviderApplicationService
+    skillVersionAppSvc     services.SkillVersionApplicationService
+    skillImportTaskAppSvc  services.SkillImportTaskApplicationService
+}
+```
+
+**单文件维护的好处**：
+1. Skill 模块对外是一个完整能力单元，单一 Handler 体现这种聚合性。
+2. 27 个接口共用同一套错误处理辅助函数（如 `writeError`），避免重复代码。
+3. 与 mooc-manus 现有 5 个 Handler 文件结构对应（每个 Handler 一个文件）一致。
 
 ---
 
@@ -388,9 +428,9 @@ api/handlers/
 1. **阶段 1 施工时**：直接复制补充 1 的 SQL 追加到 `docs/sql/manus_schema.sql`。
 2. **阶段 4 施工时**：直接复制补充 2 的常量追加到 `internal/applications/dtos/constants.go`。
 3. **阶段 7 施工时**：
+   - 在 `api/handlers/skill.go` 中定义单一 `SkillHandler`（持有 4 个 ApplicationService），承载全部 27 个接口（method 命名规则见补充 4）。
    - 复制补充 3 的路由注册代码追加到 `api/routers/route.go` 末尾。
    - 参考 form-data / SSE 范式实现 3 类特殊接口（草稿/发布/导入 用 form-data；任务详情用 SSE；文件下载用 GET）。
-   - 按照补充 4 拆分 4 个 Handler 文件。
 
 ---
 

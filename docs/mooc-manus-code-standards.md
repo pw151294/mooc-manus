@@ -773,10 +773,7 @@ type FileStorage interface {
 
 阶段 7 (Handler + 路由 + FileStorage)：
   api/handlers/
-    ├ skill.go               // SkillHandler（9 个接口）
-    ├ skill_provider.go      // SkillProviderHandler（7 个接口：Import/Sync/Delete/List/Detail）
-    ├ skill_import_task.go   // SkillImportTaskHandler（3 个接口：任务订阅 SSE / List / Delete）
-    └ skill_version.go       // SkillVersionHandler（8 个接口，含 1 个 GET 下载）
+    └ skill.go               // SkillHandler（统一封装 27 个接口：Skill 9 + Provider 7 + ImportTask 3 + Version 8）
 
   api/routers/route.go       // 追加 /api/v1/skill 路由组（DI 链路 + 注册骨架见补充文档 §3）
 
@@ -785,11 +782,15 @@ type FileStorage interface {
     └ local_file_storage.go  // LocalFileStorage 实现
 ```
 
+> **Handler 设计**：所有 27 个接口集中在单一 `SkillHandler` 内（持有 4 个 ApplicationService 依赖：`SkillAppSvc / SkillProviderAppSvc / SkillVersionAppSvc / SkillImportTaskAppSvc`），统一在 `api/handlers/skill.go` 文件中维护。method 名按业务子域加前缀区分（如 `DraftSave / Publish / ProviderImportZip / ImportTaskDetail / VersionRollback`）。
+>
 > **补充文档**：本报告配套的施工细节（DDL 草案、常量清单、路由骨架）已整理至 `docs/mooc-manus-code-standards-supplement.md`，阶段 1 / 4 / 7 施工时请配合使用。
 
 ### 4.2 接口路径保留清单（按 Beedance 文档 §3）
 
-| 路径 | 方法 | Handler |
+> 全部 27 个接口由单一 `SkillHandler` 承载，method 名按业务子域加前缀（Provider / ImportTask / Version 子域显式标注前缀，Skill 子域不加前缀）。
+
+| 路径 | 方法 | Handler.Method |
 |------|------|---------|
 | `/api/v1/skill/draft/save` | POST | SkillHandler.DraftSave |
 | `/api/v1/skill/publish` | POST | SkillHandler.Publish |
@@ -800,24 +801,24 @@ type FileStorage interface {
 | `/api/v1/skill/detail` | POST | SkillHandler.Detail |
 | `/api/v1/skill/with/version` | POST | SkillHandler.WithVersion |
 | `/api/v1/skill/file/download` | GET | SkillHandler.FileDownload |
-| `/api/v1/skill/provider/import/git` | POST | SkillProviderHandler.ImportGit |
-| `/api/v1/skill/provider/import/zip` | POST | SkillProviderHandler.ImportZip |
-| `/api/v1/skill/provider/import/zip/legacy` | POST | SkillProviderHandler.ImportZipLegacy |
-| `/api/v1/skill/provider/import/task/detail` | POST | SkillProviderHandler.ImportTaskDetail (SSE) |
-| `/api/v1/skill/provider/import/task/list` | POST | SkillProviderHandler.ImportTaskList |
-| `/api/v1/skill/provider/import/task/delete` | POST | SkillProviderHandler.ImportTaskDelete |
-| `/api/v1/skill/provider/sync` | POST | SkillProviderHandler.Sync |
-| `/api/v1/skill/provider/delete` | POST | SkillProviderHandler.Delete |
-| `/api/v1/skill/provider/list` | POST | SkillProviderHandler.List |
-| `/api/v1/skill/provider/detail` | POST | SkillProviderHandler.Detail |
-| `/api/v1/skill/version/create` | POST | SkillVersionHandler.Create |
-| `/api/v1/skill/version/validate` | POST | SkillVersionHandler.Validate |
-| `/api/v1/skill/version/delete` | POST | SkillVersionHandler.Delete |
-| `/api/v1/skill/version/list` | POST | SkillVersionHandler.List |
-| `/api/v1/skill/version/detail` | POST | SkillVersionHandler.Detail |
-| `/api/v1/skill/version/latest` | POST | SkillVersionHandler.Latest |
-| `/api/v1/skill/version/rollback` | POST | SkillVersionHandler.Rollback |
-| `/api/v1/skill/version/export` | POST | SkillVersionHandler.Export |
+| `/api/v1/skill/provider/import/git` | POST | SkillHandler.ProviderImportGit |
+| `/api/v1/skill/provider/import/zip` | POST | SkillHandler.ProviderImportZip |
+| `/api/v1/skill/provider/import/zip/legacy` | POST | SkillHandler.ProviderImportZipLegacy |
+| `/api/v1/skill/provider/import/task/detail` | POST | SkillHandler.ImportTaskDetail (SSE) |
+| `/api/v1/skill/provider/import/task/list` | POST | SkillHandler.ImportTaskList |
+| `/api/v1/skill/provider/import/task/delete` | POST | SkillHandler.ImportTaskDelete |
+| `/api/v1/skill/provider/sync` | POST | SkillHandler.ProviderSync |
+| `/api/v1/skill/provider/delete` | POST | SkillHandler.ProviderDelete |
+| `/api/v1/skill/provider/list` | POST | SkillHandler.ProviderList |
+| `/api/v1/skill/provider/detail` | POST | SkillHandler.ProviderDetail |
+| `/api/v1/skill/version/create` | POST | SkillHandler.VersionCreate |
+| `/api/v1/skill/version/validate` | POST | SkillHandler.VersionValidate |
+| `/api/v1/skill/version/delete` | POST | SkillHandler.VersionDelete |
+| `/api/v1/skill/version/list` | POST | SkillHandler.VersionList |
+| `/api/v1/skill/version/detail` | POST | SkillHandler.VersionDetail |
+| `/api/v1/skill/version/latest` | POST | SkillHandler.VersionLatest |
+| `/api/v1/skill/version/rollback` | POST | SkillHandler.VersionRollback |
+| `/api/v1/skill/version/export` | POST | SkillHandler.VersionExport |
 
 > **共 27 个 Handler 方法**（Skill 9 + Provider 10 + Version 8），与业务规范 §3 完全一致。
 
