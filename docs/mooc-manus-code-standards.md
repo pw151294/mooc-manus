@@ -1,6 +1,8 @@
 # mooc-manus 项目代码规范调研报告
 
 > 本报告用于指导 Skill 配置与版本管理模块迁移到 mooc-manus 的全部 7 个实施阶段。所有目录布局、命名风格、技术选型、冲突仲裁均以本报告为准；任何与本报告冲突的实施动作必须先回到本报告同步更新后再执行。
+>
+> **配套补充文档**：`docs/mooc-manus-code-standards-supplement.md` 包含阶段 1（DDL 草案）、阶段 4（常量清单）、阶段 7（路由骨架）的施工细节，施工时请配合使用。
 
 ---
 
@@ -548,24 +550,89 @@ appConfig := r.Group("/api/app/config")
 - **`ext_info` 标准 Key 沿用文档**：`zipFilePath / snapshotSkillName / snapshotIcon / snapshotImageUrl`（移除 `snapshotTagIds`，因不引入标签）。
 - **Skill.ext_info 标准 Key**：`icon / imageUrl`。
 
+> **范式说明**：mooc-manus 现有 `a2a_server_config.ext_info` 仅在 PO 侧用 `string`，对应 DO `A2AServerConfig` 没有 ExtInfo 字段，**DO 侧 string ↔ struct 互转范式由本模块首次落地**。Convert 函数模板如下：
+>
+> ```go
+> // DO -> PO：struct 序列化为 JSON 字符串
+> func ConvertSkillVersionDO2PO(do SkillVersionDO) infra.SkillVersionPO {
+>     extBytes, _ := json.Marshal(do.ExtInfo)  // SkillVersionExtInfo struct
+>     return infra.SkillVersionPO{
+>         // ... 其他字段
+>         ExtInfo: string(extBytes),
+>     }
+> }
+>
+> // PO -> DO：JSON 字符串反序列化为 struct
+> func ConvertSkillVersionPO2DO(po infra.SkillVersionPO) SkillVersionDO {
+>     var ext SkillVersionExtInfo
+>     if po.ExtInfo != "" {
+>         _ = json.Unmarshal([]byte(po.ExtInfo), &ext)
+>     }
+>     return SkillVersionDO{
+>         // ... 其他字段
+>         ExtInfo: ext,
+>     }
+> }
+> ```
+
 #### 3.2.5 响应封装 → 直接 c.JSON
 
-- 不引入 `SingleResponse[T]` / `PageResponse[T]`，不引入 `traceId` 字段。
+- 不引入通用 `SingleResponse[T]` / `PageResponse[T]`，不引入 `traceId` 字段。
 - **单对象响应**：`c.JSON(http.StatusOK, skillInfoDTO)`。
 - **列表响应**：`c.JSON(http.StatusOK, []SkillInfoDTO{})`。
-- **分页响应（保留 4 字段）**：`c.JSON(http.StatusOK, gin.H{"total": total, "pageSize": ps, "pageNum": pn, "records": records})`，或封装为 `SkillPageDTO struct { Total int64; PageSize int; PageNum int; Records []SkillInfo }` 后直接返回（**推荐后者**，避免 gin.H 散落各处）。
 - **空成功 / 删除成功**：`c.JSON(http.StatusOK, gin.H{"status": "success"})`。
 - **文件下载 / SSE / 导出 ZIP**：保留 `application/octet-stream` / `text/event-stream` / `application/zip` 流式写入语义。
 
-#### 3.2.6 错误码 → err.Error() 透传
+> **分页是 Skill 模块新增范式**：mooc-manus 现有 5 个 Handler 均无分页接口。Skill 模块的分页接口（`/api/v1/skill/list`）需要 4 字段（total / pageSize / pageNum / records）外层结构。为避免 `gin.H{...}` 散落各处，**统一在 `internal/applications/dtos/skill.go` 内定义** `SkillPageDTO`：
+>
+> ```go
+> type SkillPageDTO struct {
+>     Total    int64        `json:"total"`
+>     PageSize int          `json:"pageSize"`
+>     PageNum  int          `json:"pageNum"`
+>     Records  []SkillInfo  `json:"records"`
+> }
+> ```
+>
+> 该结构 **仅用于本模块的分页接口**，未来其他模块如有分页需求可参考此范式新建对应 `XxxPageDTO`，不抽离为 `pkg/response` 通用类型。
+
+#### 3.2.6 错误码 → err.Error() 透传 + HTTP 状态码三档分类
 
 - 不引入 `SKILL_NOT_FOUND` 等业务错误码字符串。
-- Service 层使用 `errors.New("skill not found")` / `fmt.Errorf("skill name duplicate: %s", name)` 返回带文本的 error。
-- Handler 层：参数错误 `400`、其他错误 `500`，统一 `gin.H{"error": err.Error()}`。
-- **业务校验失败的文本约定**（前后端约定，便于调试，无强制结构）：
-  - `skill not found` / `skill provider not found` / `skill version not found`
-  - `skill.md not found in files` / `skill name is required` / `skill name too long`
-  - `skill name duplicate: {name}` / `import file invalid` / `import task not found`
+- Service 层使用标准 error，**通过 `errors.Is` 可识别的哨兵错误 + 文本组合**返回，便于 Handler 分类映射 HTTP 状态码。
+- 在 `internal/applications/services/skill.go` 顶部定义模块级哨兵错误（仅本模块使用，不抽离为通用包）：
+  ```go
+  var (
+      ErrNotFound     = errors.New("not found")
+      ErrDuplicate    = errors.New("duplicate")
+      ErrInvalidInput = errors.New("invalid input")
+  )
+  ```
+- Service 层返回时使用 `fmt.Errorf("skill not found: %w", ErrNotFound)`，保留具体业务文本同时携带哨兵。
+- **Handler 层错误分类规则**（写入 `api/handlers/skill.go` 顶部的私有辅助函数）：
+
+  ```go
+  func writeError(c *gin.Context, err error) {
+      switch {
+      case errors.Is(err, services.ErrNotFound):
+          c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})        // 404
+      case errors.Is(err, services.ErrDuplicate):
+          c.JSON(http.StatusConflict, gin.H{"error": err.Error()})        // 409
+      case errors.Is(err, services.ErrInvalidInput):
+          c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})      // 400
+      default:
+          c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()}) // 500
+      }
+  }
+  ```
+
+- **HTTP 状态码归属**：
+  - `400` Bad Request：参数解析失败、`ErrInvalidInput`（如「skill.md not found in files」「skill name too long」「import file invalid」）
+  - `404` Not Found：`ErrNotFound`（如「skill not found」「skill provider not found」「skill version not found」「import task not found」）
+  - `409` Conflict：`ErrDuplicate`（如「skill name duplicate: {name}」「provider name duplicate」）
+  - `500` Internal Server Error：其他未分类错误（GORM 错误、文件 IO 错误等）
+
+> 该方案不引入业务错误码字符串，但通过 3 个哨兵错误为前端提供了**HTTP 状态码层面**的稳定分类依据。前端判断错误类型只看 HTTP 状态码，不解析 message 文本（message 仅供调试展示）。
 
 #### 3.2.7 多租户 → 移除 scope / subject_id
 
@@ -579,10 +646,12 @@ appConfig := r.Group("/api/app/config")
 
 #### 3.2.8 OSS → FileStorage 抽象 + 本地实现
 
-**接口定义（`internal/infra/external/storage/file_storage.go`）：**
+> **包路径选型说明**：mooc-manus 已有 `internal/infra/storage/`（Postgres/Redis 客户端单例），为避免包名冲突 + 与同级 `external/sse/`、`external/llm/`、`external/health_checker/` 命名风格保持一致，**FileStorage 抽象放置在 `internal/infra/external/file_storage/`**，包名 `package file_storage`。
+
+**接口定义（`internal/infra/external/file_storage/file_storage.go`）：**
 
 ```go
-package storage
+package file_storage
 
 import "io"
 
@@ -596,9 +665,9 @@ type FileStorage interface {
 }
 ```
 
-**本地实现（`internal/infra/external/storage/local.go`）：**
+**本地实现（`internal/infra/external/file_storage/local_file_storage.go`）：**
 
-- 根目录：`./data/`（可在 `config.toml` 中配置 `[storage] root_dir`）。
+- 根目录：`./data/`（可在 `config.toml` 中新增 `[storage] root_dir`）。
 - Bucket 映射为子目录：`{root_dir}/{bucket}/{key}`。
 - `PutObject` 写文件 + 计算 MD5 作为 `checksum`。
 - `CopyObject` 使用 `io.Copy`。
@@ -656,6 +725,8 @@ type FileStorage interface {
     ├ skill_version   建表 + 索引 + 注释
     └ task_execution  建表 + 索引 + 注释
 
+  完整 DDL 草案（4 张表约 150 行）详见补充文档 §1。
+
 阶段 2 (Model)：
   internal/infra/models/
     ├ skill_provider.go      // SkillProviderPO + TableName()
@@ -677,7 +748,7 @@ type FileStorage interface {
     └ skill_import_task.go   // 导入任务 DTO（SkillImportTaskInfo / SkillImportEventData）
 
 阶段 4 (常量)：
-  internal/applications/dtos/constants.go  // 追加 Skill 常量：bucket名、初始版本号(v0.1.0)、draft标识、路径模板等
+  internal/applications/dtos/constants.go  // 追加 Skill 常量（详见补充文档 §2）
   （不新增 pkg/errs，不新增错误码常量）
 
 阶段 5 (Repository)：
@@ -703,15 +774,18 @@ type FileStorage interface {
 阶段 7 (Handler + 路由 + FileStorage)：
   api/handlers/
     ├ skill.go               // SkillHandler（9 个接口）
-    ├ skill_provider.go      // SkillProviderHandler（10 个接口）
+    ├ skill_provider.go      // SkillProviderHandler（7 个接口：Import/Sync/Delete/List/Detail）
+    ├ skill_import_task.go   // SkillImportTaskHandler（3 个接口：任务订阅 SSE / List / Delete）
     └ skill_version.go       // SkillVersionHandler（8 个接口，含 1 个 GET 下载）
 
-  api/routers/route.go       // 追加 /api/v1/skill / /api/v1/skill/provider / /api/v1/skill/version 路由组
+  api/routers/route.go       // 追加 /api/v1/skill 路由组（DI 链路 + 注册骨架见补充文档 §3）
 
-  internal/infra/external/storage/
+  internal/infra/external/file_storage/
     ├ file_storage.go        // FileStorage 接口
-    └ local.go               // LocalFileStorage 实现
+    └ local_file_storage.go  // LocalFileStorage 实现
 ```
+
+> **补充文档**：本报告配套的施工细节（DDL 草案、常量清单、路由骨架）已整理至 `docs/mooc-manus-code-standards-supplement.md`，阶段 1 / 4 / 7 施工时请配合使用。
 
 ### 4.2 接口路径保留清单（按 Beedance 文档 §3）
 
@@ -745,7 +819,7 @@ type FileStorage interface {
 | `/api/v1/skill/version/rollback` | POST | SkillVersionHandler.Rollback |
 | `/api/v1/skill/version/export` | POST | SkillVersionHandler.Export |
 
-> 共 22 个 Handler 方法，与文档 §3 完全一致。
+> **共 27 个 Handler 方法**（Skill 9 + Provider 10 + Version 8），与业务规范 §3 完全一致。
 
 ### 4.3 SSE 复用现有封装
 
