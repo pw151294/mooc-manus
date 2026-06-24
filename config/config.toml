@@ -26,3 +26,6 @@ max_age = 7 # days
 compress = false
 enable_caller = true
 caller_skip = 1
+
+[storage]
+root_dir = "./data" # FileStorage 根目录

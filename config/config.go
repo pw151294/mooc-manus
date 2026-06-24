@@ -14,6 +14,7 @@ type GlobalConfig struct {
 	Redis        RedisConfig    `toml:"redis"`
 	Database     DatabaseConfig `toml:"database"`
 	LoggerConfig LoggerConfig   `toml:"logger"`
+	Storage      StorageConfig  `toml:"storage"`
 }
 
 type RedisConfig struct {
@@ -32,6 +33,10 @@ type DatabaseConfig struct {
 	Host     string `toml:"host"`
 	Port     int    `toml:"port"`
 	Sslmode  string `toml:"sslmode"`
+}
+
+type StorageConfig struct {
+	RootDir string `toml:"root_dir"` // FileStorage 根目录，默认 ./data
 }
 
 type LoggerConfig struct {

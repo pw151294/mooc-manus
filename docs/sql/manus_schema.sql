@@ -167,3 +167,129 @@ CREATE TABLE files
 
     CONSTRAINT pk_files_id PRIMARY KEY (id)
 );
+
+-- ============================================================
+-- Skill 模块（迁移自 Beedance Skill 配置 & 版本管理）
+-- 详见 docs/mooc-manus-code-standards.md §3.2 与
+--      docs/mooc-manus-code-standards-supplement.md §1
+-- ============================================================
+
+CREATE TABLE skill_provider
+(
+    skill_provider_id VARCHAR(36) PRIMARY KEY,
+    provider_name     VARCHAR(128) NOT NULL UNIQUE,
+    provider_type     VARCHAR(32)  NOT NULL,
+    auth_type         VARCHAR(32),
+    repo_url          VARCHAR(512),
+    status            VARCHAR(32)  NOT NULL DEFAULT 'ACTIVE',
+    creator           VARCHAR(64),
+    updator           VARCHAR(64),
+    ext_info          JSONB,
+    created_at        TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at        TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_skill_provider_status ON skill_provider (status);
+CREATE INDEX idx_skill_provider_created_at ON skill_provider (created_at);
+
+COMMENT ON TABLE skill_provider IS 'Skill 提供者表';
+COMMENT ON COLUMN skill_provider.skill_provider_id IS '主键 ID (UUID)';
+COMMENT ON COLUMN skill_provider.provider_name IS '提供者名称（全局唯一）';
+COMMENT ON COLUMN skill_provider.provider_type IS '提供者类型：GIT / ZIP / CUSTOM';
+COMMENT ON COLUMN skill_provider.auth_type IS '认证类型：HTTP_TOKEN / NONE';
+COMMENT ON COLUMN skill_provider.repo_url IS 'Git 仓库地址（provider_type=GIT 时必填）';
+COMMENT ON COLUMN skill_provider.status IS '状态：ACTIVE / DISABLED';
+COMMENT ON COLUMN skill_provider.ext_info IS '扩展信息（JSONB）';
+COMMENT ON COLUMN skill_provider.created_at IS '创建时间';
+COMMENT ON COLUMN skill_provider.updated_at IS '更新时间';
+
+CREATE TABLE skill
+(
+    skill_id          VARCHAR(36) PRIMARY KEY,
+    skill_name        VARCHAR(120) NOT NULL UNIQUE,
+    skill_provider_id VARCHAR(36)  NOT NULL REFERENCES skill_provider (skill_provider_id) ON DELETE RESTRICT,
+    description       VARCHAR(3000),
+    latest_version_id VARCHAR(36),
+    status            VARCHAR(32)  NOT NULL DEFAULT 'ACTIVE',
+    creator           VARCHAR(64),
+    updator           VARCHAR(64),
+    ext_info          JSONB,
+    created_at        TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at        TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_skill_provider_id ON skill (skill_provider_id);
+CREATE INDEX idx_skill_status ON skill (status);
+CREATE INDEX idx_skill_created_at ON skill (created_at);
+
+COMMENT ON TABLE skill IS 'Skill 配置表';
+COMMENT ON COLUMN skill.skill_id IS '主键 ID (UUID)';
+COMMENT ON COLUMN skill.skill_name IS 'Skill 名称（全局唯一）';
+COMMENT ON COLUMN skill.skill_provider_id IS '所属 Provider（外键，删除 Provider 时若有 Skill 会拒绝）';
+COMMENT ON COLUMN skill.description IS 'Skill 描述';
+COMMENT ON COLUMN skill.latest_version_id IS '最新已发布版本 ID（指向 skill_version.skill_version_id）';
+COMMENT ON COLUMN skill.status IS '状态：ACTIVE / DISABLED';
+COMMENT ON COLUMN skill.ext_info IS '扩展信息（icon / imageUrl 的 JSON）';
+COMMENT ON COLUMN skill.created_at IS '创建时间';
+COMMENT ON COLUMN skill.updated_at IS '更新时间';
+
+CREATE TABLE skill_version
+(
+    skill_version_id VARCHAR(36) PRIMARY KEY,
+    skill_id         VARCHAR(36)  NOT NULL REFERENCES skill (skill_id) ON DELETE CASCADE,
+    version          VARCHAR(32)  NOT NULL,
+    description      VARCHAR(3000),
+    metadata         JSONB,
+    skill_files      JSONB,
+    ext_info         JSONB,
+    creator          VARCHAR(64),
+    updator          VARCHAR(64),
+    created_at       TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at       TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (skill_id, version)
+);
+
+CREATE INDEX idx_skill_version_skill_id ON skill_version (skill_id);
+CREATE INDEX idx_skill_version_created_at ON skill_version (created_at);
+
+COMMENT ON TABLE skill_version IS 'Skill 版本表';
+COMMENT ON COLUMN skill_version.skill_version_id IS '主键 ID (UUID)';
+COMMENT ON COLUMN skill_version.skill_id IS '所属 Skill（外键，删除 Skill 时级联删除版本）';
+COMMENT ON COLUMN skill_version.version IS '版本号（draft 或 vX.Y.Z，与 skill_id 联合唯一）';
+COMMENT ON COLUMN skill_version.description IS '版本描述';
+COMMENT ON COLUMN skill_version.metadata IS 'SKILL.md 解析后的 JSON';
+COMMENT ON COLUMN skill_version.skill_files IS '版本文件列表（JSONB 数组：文件名/大小/校验和/OSS Key）';
+COMMENT ON COLUMN skill_version.ext_info IS '扩展信息（zipFilePath / 快照字段）';
+COMMENT ON COLUMN skill_version.created_at IS '创建时间';
+COMMENT ON COLUMN skill_version.updated_at IS '更新时间';
+
+CREATE TABLE task_execution
+(
+    task_id     VARCHAR(100) PRIMARY KEY,
+    app_id      VARCHAR(64)  NOT NULL,
+    app_type    VARCHAR(64)  NOT NULL,
+    status      VARCHAR(32)  NOT NULL DEFAULT 'PROCESSING',
+    stage       VARCHAR(32),
+    progress    INTEGER      NOT NULL DEFAULT 0,
+    ext_info    JSONB,
+    creator     VARCHAR(64),
+    created_at  TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at  TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    archived_at TIMESTAMPTZ
+);
+
+CREATE INDEX idx_task_app_id ON task_execution (app_id);
+CREATE INDEX idx_task_status ON task_execution (status);
+CREATE INDEX idx_task_created_at ON task_execution (created_at);
+
+COMMENT ON TABLE task_execution IS '异步任务执行记录表（跨模块共用）';
+COMMENT ON COLUMN task_execution.task_id IS '任务 ID（业务生成，最长 100 字符）';
+COMMENT ON COLUMN task_execution.app_id IS '应用 ID（Skill 模块固定 SKILL_APP）';
+COMMENT ON COLUMN task_execution.app_type IS '任务类型（Skill 模块固定 SKILL_IMPORT）';
+COMMENT ON COLUMN task_execution.status IS '任务状态：PROCESSING / COMPLETED / FAILED';
+COMMENT ON COLUMN task_execution.stage IS '当前阶段（仅 Skill 导入任务有效：UPLOAD/EXTRACT/VALIDATE/REGISTER/COMPLETED）';
+COMMENT ON COLUMN task_execution.progress IS '进度（0-100）';
+COMMENT ON COLUMN task_execution.ext_info IS '扩展信息（logs / skillCount / providerId / errorMessage 的 JSON）';
+COMMENT ON COLUMN task_execution.created_at IS '创建时间';
+COMMENT ON COLUMN task_execution.updated_at IS '更新时间';
+COMMENT ON COLUMN task_execution.archived_at IS '归档时间（完成后 7 天可标记归档）';

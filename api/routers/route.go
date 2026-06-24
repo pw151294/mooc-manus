@@ -2,11 +2,13 @@ package routers
 
 import (
 	"mooc-manus/api/handlers"
+	"mooc-manus/config"
 	"mooc-manus/internal/applications/services"
 	app_svc "mooc-manus/internal/applications/services"
 	domain_svc "mooc-manus/internal/domains/services"
 	"mooc-manus/internal/domains/services/agents"
 	"mooc-manus/internal/domains/services/flows"
+	"mooc-manus/internal/infra/external/file_storage"
 	"mooc-manus/internal/infra/external/health_checker"
 	"mooc-manus/internal/infra/repositories"
 
@@ -92,6 +94,79 @@ func InitRouter() *gin.Engine {
 	flow := r.Group("/api/flow")
 	{
 		flow.POST("/run", flowHandler.Run)
+	}
+
+	// ============================================================
+	// Skill 模块（阶段 7）
+	// ============================================================
+
+	// 1) Repository
+	skillProviderRepo := repositories.NewSkillProviderRepository()
+	skillRepo := repositories.NewSkillRepository()
+	skillVersionRepo := repositories.NewSkillVersionRepository()
+	taskExecutionRepo := repositories.NewTaskExecutionRepository()
+
+	// 2) FileStorage
+	rootDir := "./data"
+	if config.Cfg != nil {
+		rootDir = config.Cfg.Storage.RootDir
+	}
+	fs := file_storage.NewLocalFileStorage(rootDir)
+
+	// 3) Domain Service
+	skillProviderDomainSvc := domain_svc.NewSkillProviderDomainService(skillProviderRepo, skillRepo)
+	skillDomainSvc := domain_svc.NewSkillDomainService(skillRepo, skillVersionRepo, skillProviderRepo, fs)
+	skillVersionDomainSvc := domain_svc.NewSkillVersionDomainService(skillVersionRepo, skillRepo, fs)
+	skillImportTaskDomainSvc := domain_svc.NewSkillImportTaskDomainService(taskExecutionRepo, skillDomainSvc, skillProviderDomainSvc, fs)
+
+	// 4) Application Service
+	skillProviderAppSvc := app_svc.NewSkillProviderApplicationService(skillProviderDomainSvc)
+	skillVersionAppSvc := app_svc.NewSkillVersionApplicationService(skillVersionDomainSvc, skillDomainSvc)
+	skillImportTaskAppSvc := app_svc.NewSkillImportTaskApplicationService(skillImportTaskDomainSvc)
+	skillAppSvc := app_svc.NewSkillApplicationService(skillDomainSvc, skillVersionDomainSvc, skillProviderDomainSvc)
+
+	// 5) Handler（单一 SkillHandler 持有全部 4 个 ApplicationService）
+	skillHandler := handlers.NewSkillHandler(skillAppSvc, skillProviderAppSvc, skillVersionAppSvc, skillImportTaskAppSvc)
+
+	// 6) 路由注册（4 个分组，27 个接口）
+	skill := r.Group("/api/v1/skill")
+	{
+		skill.POST("/draft/save", skillHandler.DraftSave)
+		skill.POST("/publish", skillHandler.Publish)
+		skill.POST("/update", skillHandler.Update)
+		skill.POST("/delete", skillHandler.Delete)
+		skill.POST("/list", skillHandler.List)
+		skill.POST("/listAll", skillHandler.ListAll)
+		skill.POST("/detail", skillHandler.Detail)
+		skill.POST("/with/version", skillHandler.WithVersion)
+		skill.GET("/file/download", skillHandler.FileDownload)
+	}
+	skillProvider := r.Group("/api/v1/skill/provider")
+	{
+		skillProvider.POST("/import/git", skillHandler.ProviderImportGit)
+		skillProvider.POST("/import/zip", skillHandler.ProviderImportZip)
+		skillProvider.POST("/import/zip/legacy", skillHandler.ProviderImportZipLegacy)
+		skillProvider.POST("/sync", skillHandler.ProviderSync)
+		skillProvider.POST("/delete", skillHandler.ProviderDelete)
+		skillProvider.POST("/list", skillHandler.ProviderList)
+		skillProvider.POST("/detail", skillHandler.ProviderDetail)
+	}
+	skillImportTask := r.Group("/api/v1/skill/provider/import/task")
+	{
+		skillImportTask.POST("/detail", skillHandler.ImportTaskDetail)
+		skillImportTask.POST("/list", skillHandler.ImportTaskList)
+		skillImportTask.POST("/delete", skillHandler.ImportTaskDelete)
+	}
+	skillVersion := r.Group("/api/v1/skill/version")
+	{
+		skillVersion.POST("/create", skillHandler.VersionCreate)
+		skillVersion.POST("/validate", skillHandler.VersionValidate)
+		skillVersion.POST("/delete", skillHandler.VersionDelete)
+		skillVersion.POST("/list", skillHandler.VersionList)
+		skillVersion.POST("/detail", skillHandler.VersionDetail)
+		skillVersion.POST("/latest", skillHandler.VersionLatest)
+		skillVersion.POST("/rollback", skillHandler.VersionRollback)
+		skillVersion.POST("/export", skillHandler.VersionExport)
 	}
 
 	return r
