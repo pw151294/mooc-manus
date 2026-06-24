@@ -4,6 +4,11 @@ import (
 	"mooc-manus/internal/domains/models/file"
 )
 
+type SkillRef struct {
+	SkillID string
+	Version string
+}
+
 type ChatRequest struct {
 	Streaming      bool
 	SystemPrompt   string
@@ -12,6 +17,7 @@ type ChatRequest struct {
 	AppConfigId    string
 	FunctionIds    []string
 	ProviderIds    []string
+	SkillRefs      []SkillRef
 	Files          []file.File
 }
 

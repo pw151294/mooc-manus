@@ -8,7 +8,9 @@ import (
 	"mooc-manus/internal/domains/models/prompts/plans"
 	"mooc-manus/internal/domains/services"
 	"mooc-manus/internal/domains/services/tools"
+	"mooc-manus/internal/infra/external/file_storage"
 	"mooc-manus/internal/infra/external/llm"
+	"mooc-manus/internal/infra/repositories"
 	"mooc-manus/pkg/logger"
 	"sync"
 
@@ -25,13 +27,26 @@ type BaseAgentDomainServiceImpl struct {
 	appConfigDomainSvc services.AppConfigDomainService
 	providerDomainSvc  services.ToolProviderDomainService
 	functionDomainSvc  services.ToolFunctionDomainService
+	skillRepo          repositories.SkillRepository
+	versionRepo        repositories.SkillVersionRepository
+	storage            file_storage.FileStorage
 }
 
-func NewBaseAgentDomainService(appConfigDomainSvc services.AppConfigDomainService, providerDomainSvc services.ToolProviderDomainService, functionDomainSvc services.ToolFunctionDomainService) BaseAgentDomainService {
+func NewBaseAgentDomainService(
+	appConfigDomainSvc services.AppConfigDomainService,
+	providerDomainSvc services.ToolProviderDomainService,
+	functionDomainSvc services.ToolFunctionDomainService,
+	skillRepo repositories.SkillRepository,
+	versionRepo repositories.SkillVersionRepository,
+	storage file_storage.FileStorage,
+) BaseAgentDomainService {
 	return &BaseAgentDomainServiceImpl{
 		appConfigDomainSvc: appConfigDomainSvc,
 		providerDomainSvc:  providerDomainSvc,
 		functionDomainSvc:  functionDomainSvc,
+		skillRepo:          skillRepo,
+		versionRepo:        versionRepo,
+		storage:            storage,
 	}
 }
 
@@ -170,6 +185,15 @@ func (s *BaseAgentDomainServiceImpl) createBaseAgent(request agents.ChatRequest)
 		return nil, err
 	}
 	logger.Info("init tools success")
+
+	// 追加内置工具
+	builtinTools, err := tools.BuiltinTools(s.skillRepo, s.versionRepo, s.storage, request.SkillRefs)
+	if err != nil {
+		logger.Error("init builtin tools failed", zap.Error(err))
+		return nil, err
+	}
+	baseTools = append(baseTools, builtinTools...)
+	logger.Info("init builtin tools success")
 
 	return NewBaseAgent(appConfig.AgentConfig, openAiLLM, chatMemory, baseTools, request.SystemPrompt), nil
 }

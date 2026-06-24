@@ -23,26 +23,18 @@ func InitRouter() *gin.Engine {
 	providerRepo := repositories.NewToolProviderRepository()
 	functionRepo := repositories.NewToolFunctionRepository()
 
-	// Initialize domain services
+	// Initialize domain services (without agent services yet - need skillRepo first)
 	providerDomainSvc := domain_svc.NewToolProviderDomainService(providerRepo, functionRepo)
 	functionDomainSvc := domain_svc.NewToolFunctionDomainService(functionRepo, providerRepo)
 	appConfigDomainSvc := domain_svc.NewAppConfigDomainService(appConfigRepo, functionDomainSvc)
-	baseAgentDomainSvc := agents.NewBaseAgentDomainService(appConfigDomainSvc, providerDomainSvc, functionDomainSvc)
-	a2aDomainSvc := agents.NewA2ADomainService(baseAgentDomainSvc, appConfigDomainSvc, providerDomainSvc, functionDomainSvc)
-	baseFlowDomainSvc := flows.NewBaseFlowDomainService(appConfigDomainSvc, providerDomainSvc, functionDomainSvc)
 
-	// Initialize application services
+	// Initialize application services (without agent services yet)
 	appConfigAppSvc := app_svc.NewAppConfigApplicationService(appConfigDomainSvc)
 	providerAppSvc := app_svc.NewToolProviderApplicationService(providerDomainSvc)
 	functionAppSvc := app_svc.NewTooLFunctionApplicationService(functionDomainSvc)
-	baseAgentAppSvc := app_svc.NewBaseAgentApplicationService(baseAgentDomainSvc)
-	a2aAppSvc := app_svc.NewA2AApplicationService(a2aDomainSvc)
-	baseFlowAppSvc := app_svc.NewFlowApplicationService(baseFlowDomainSvc)
 
-	// Initialize handlers
+	// Initialize handlers (without agent handler yet)
 	toolHandler := handlers.NewToolHandler(providerAppSvc, functionAppSvc)
-	agentHandler := handlers.NewAgentHandler(baseAgentAppSvc, a2aAppSvc)
-	flowHandler := handlers.NewFlowHandler(baseFlowAppSvc)
 
 	status := r.Group("/api")
 	{
@@ -83,19 +75,6 @@ func InitRouter() *gin.Engine {
 		tool.GET("/function/list", toolHandler.ListFunctionsByProvider)
 	}
 
-	agent := r.Group("/api/agent")
-	{
-		agent.POST("/chat", agentHandler.Chat)
-		agent.POST("/a2a/chat", agentHandler.A2AChat)
-		agent.POST("/plan/create", agentHandler.CreatePlan)
-		agent.POST("/plan/update", agentHandler.UpdatePlan)
-	}
-
-	flow := r.Group("/api/flow")
-	{
-		flow.POST("/run", flowHandler.Run)
-	}
-
 	// ============================================================
 	// Skill 模块（阶段 7）
 	// ============================================================
@@ -127,6 +106,46 @@ func InitRouter() *gin.Engine {
 
 	// 5) Handler（单一 SkillHandler 持有全部 4 个 ApplicationService）
 	skillHandler := handlers.NewSkillHandler(skillAppSvc, skillProviderAppSvc, skillVersionAppSvc, skillImportTaskAppSvc)
+
+	// ============================================================
+	// Agent 模块（依赖 Skill 模块的 skillRepo / skillVersionRepo / fs）
+	// ============================================================
+	baseAgentDomainSvc := agents.NewBaseAgentDomainService(
+		appConfigDomainSvc,
+		providerDomainSvc,
+		functionDomainSvc,
+		skillRepo,
+		skillVersionRepo,
+		fs,
+	)
+	a2aDomainSvc := agents.NewA2ADomainService(baseAgentDomainSvc, appConfigDomainSvc, providerDomainSvc, functionDomainSvc)
+	baseFlowDomainSvc := flows.NewBaseFlowDomainService(appConfigDomainSvc, providerDomainSvc, functionDomainSvc)
+
+	baseAgentAppSvc := app_svc.NewBaseAgentApplicationService(baseAgentDomainSvc)
+	a2aAppSvc := app_svc.NewA2AApplicationService(a2aDomainSvc)
+	baseFlowAppSvc := app_svc.NewFlowApplicationService(baseFlowDomainSvc)
+
+	agentHandler := handlers.NewAgentHandler(baseAgentAppSvc, a2aAppSvc)
+	flowHandler := handlers.NewFlowHandler(baseFlowAppSvc)
+
+	// ============================================================
+	// 路由注册
+	// ============================================================
+
+	agent := r.Group("/api/agent")
+	{
+		agent.POST("/chat", agentHandler.Chat)
+		agent.POST("/a2a/chat", agentHandler.A2AChat)
+		agent.POST("/plan/create", agentHandler.CreatePlan)
+		agent.POST("/plan/update", agentHandler.UpdatePlan)
+	}
+
+	flow := r.Group("/api/flow")
+	{
+		flow.POST("/run", flowHandler.Run)
+	}
+
+	// 6) 路由注册（4 个分组，27 个接口）
 
 	// 6) 路由注册（4 个分组，27 个接口）
 	skill := r.Group("/api/v1/skill")

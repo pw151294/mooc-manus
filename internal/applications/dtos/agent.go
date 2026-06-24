@@ -5,6 +5,11 @@ import (
 	"mooc-manus/internal/domains/models/file"
 )
 
+type SkillRef struct {
+	SkillID string `json:"skillId"`
+	Version string `json:"version"`
+}
+
 type ChatClientRequest struct {
 	Streaming      bool          `json:"streaming"`
 	ApiKey         string        `json:"apiKey"`
@@ -14,6 +19,7 @@ type ChatClientRequest struct {
 	AppConfigId    string        `json:"appConfigId"`
 	FunctionIds    []string      `json:"functionIds"`
 	ProviderIds    []string      `json:"providerIds"`
+	SkillRefs      []SkillRef    `json:"skillRefs"`
 	Files          []interface{} `json:"file"`
 }
 
@@ -54,6 +60,15 @@ func ConvertChatClientRequest2Request(clientRequest ChatClientRequest) agents.Ch
 	request.FunctionIds = clientRequest.FunctionIds
 	request.ProviderIds = clientRequest.ProviderIds
 	request.Files = convertInterfaces2Files(clientRequest.Files)
+	// 转换 SkillRefs
+	skillRefs := make([]agents.SkillRef, 0, len(clientRequest.SkillRefs))
+	for _, ref := range clientRequest.SkillRefs {
+		skillRefs = append(skillRefs, agents.SkillRef{
+			SkillID: ref.SkillID,
+			Version: ref.Version,
+		})
+	}
+	request.SkillRefs = skillRefs
 	return request
 }
 
