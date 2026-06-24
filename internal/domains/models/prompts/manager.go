@@ -5,6 +5,9 @@ import (
 	"sync"
 )
 
+//go:embed sre/sre_system.md
+var sreSystemPrompt string
+
 //go:embed system
 var systemPrompt string
 
@@ -39,6 +42,7 @@ type PromptManager struct {
 	executionPrompt   string
 	summarizePrompt   string
 	a2aSystemPrompt   string
+	sreSystemPrompt   string
 }
 
 var pm *PromptManager
@@ -55,6 +59,7 @@ func init() {
 			executionPrompt:   executionPrompt,
 			summarizePrompt:   summarizePrompt,
 			a2aSystemPrompt:   a2aSystemPrompt,
+			sreSystemPrompt:   sreSystemPrompt,
 		}
 	})
 }
@@ -105,4 +110,10 @@ func GetA2ASystemPrompt() string {
 	pm.Lock()
 	defer pm.Unlock()
 	return pm.a2aSystemPrompt
+}
+
+func GetSRESystemPrompt() string {
+	pm.Lock()
+	defer pm.Unlock()
+	return pm.sreSystemPrompt
 }

@@ -15,6 +15,7 @@ import (
 	"mooc-manus/internal/infra/repositories"
 	"mooc-manus/pkg/logger"
 	"mooc-manus/pkg/skillerr"
+	"mooc-manus/pkg/skillmd"
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -51,10 +52,10 @@ func NewSkillDomainService(
 	storage file_storage.FileStorage,
 ) SkillDomainService {
 	return &SkillDomainServiceImpl{
-		skillRepo:   skillRepo,
-		versionRepo: versionRepo,
+		skillRepo:    skillRepo,
+		versionRepo:  versionRepo,
 		providerRepo: providerRepo,
-		storage:     storage,
+		storage:      storage,
 	}
 }
 
@@ -164,6 +165,29 @@ func (s *SkillDomainServiceImpl) DraftSave(req *dtos.SkillDraftSaveRequest, file
 	if err := validateSkillFiles(req.SkillFiles); err != nil {
 		return models.SkillDO{}, err
 	}
+
+	// 从上传文件中的 SKILL.md frontmatter 解析 name / description
+	// 新建（skillId 为空）必需；更新可选，未上传时沿用 DB 既有值
+	isNew := req.SkillID == ""
+	md, parsed, err := skillmd.ExtractFromUploads(files, isNew)
+	if err != nil {
+		return models.SkillDO{}, err
+	}
+	if parsed {
+		req.SkillName = md.Name
+		req.Description = md.Description
+	} else {
+		existing, getErr := s.skillRepo.GetById(req.SkillID)
+		if getErr != nil {
+			if errors.Is(getErr, gorm.ErrRecordNotFound) {
+				return models.SkillDO{}, fmt.Errorf("skill not found: %s: %w", req.SkillID, skillerr.ErrNotFound)
+			}
+			return models.SkillDO{}, getErr
+		}
+		req.SkillName = existing.SkillName
+		req.Description = existing.Description
+	}
+
 	if err := validateSkillName(req.SkillName); err != nil {
 		return models.SkillDO{}, err
 	}
@@ -172,7 +196,6 @@ func (s *SkillDomainServiceImpl) DraftSave(req *dtos.SkillDraftSaveRequest, file
 	}
 
 	var skillDO models.SkillDO
-	isNew := req.SkillID == ""
 
 	if isNew {
 		providerID, err := s.GetOrCreateCustomProvider()
@@ -244,6 +267,9 @@ func (s *SkillDomainServiceImpl) DraftSave(req *dtos.SkillDraftSaveRequest, file
 			SkillID:    skillDO.SkillID,
 			Version:    models.SkillDraftVersionString,
 			SkillFiles: uploadedFiles,
+		}
+		if parsed {
+			draftDO.Metadata = models.SkillMetadata{Name: md.Name, Description: md.Description}
 		}
 		draftPO := models.ConvertSkillVersionDO2PO(draftDO)
 		if exists {

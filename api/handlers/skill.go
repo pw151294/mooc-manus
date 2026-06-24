@@ -79,13 +79,12 @@ func (h *SkillHandler) DraftSave(c *gin.Context) {
 		writeError(c, err)
 		return
 	}
+	// SkillName / Description 由 Service 层从 SKILL.md frontmatter 解析，不再从表单读取
 	req := &dtos.SkillDraftSaveRequest{
-		SkillID:     c.PostForm("skillId"),
-		SkillName:   c.PostForm("skillName"),
-		Description: c.PostForm("description"),
-		Icon:        c.PostForm("icon"),
-		ImageURL:    c.PostForm("imageUrl"),
-		SkillFiles:  skillFiles,
+		SkillID:    c.PostForm("skillId"),
+		Icon:       c.PostForm("icon"),
+		ImageURL:   c.PostForm("imageUrl"),
+		SkillFiles: skillFiles,
 	}
 	var files []*multipart.FileHeader
 	if c.Request.MultipartForm != nil {
@@ -110,11 +109,10 @@ func (h *SkillHandler) Publish(c *gin.Context) {
 		writeError(c, err)
 		return
 	}
+	// SkillName / Description 由 Service 层从 SKILL.md frontmatter 解析，不再从表单读取
 	req := &dtos.SkillPublishRequest{
 		SkillID:            c.PostForm("skillId"),
 		ProviderID:         c.PostForm("providerId"),
-		SkillName:          c.PostForm("skillName"),
-		Description:        c.PostForm("description"),
 		VersionDescription: c.PostForm("versionDescription"),
 		Icon:               c.PostForm("icon"),
 		ImageURL:           c.PostForm("imageUrl"),
