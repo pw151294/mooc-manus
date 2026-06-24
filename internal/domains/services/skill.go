@@ -264,9 +264,10 @@ func (s *SkillDomainServiceImpl) DraftSave(req *dtos.SkillDraftSaveRequest, file
 			return err
 		}
 		draftDO := models.SkillVersionDO{
-			SkillID:    skillDO.SkillID,
-			Version:    models.SkillDraftVersionString,
-			SkillFiles: uploadedFiles,
+			SkillID:     skillDO.SkillID,
+			Version:     models.SkillDraftVersionString,
+			Description: skillDO.Description, // 从 SKILL.md 解析的描述写入 draft 版本
+			SkillFiles:  uploadedFiles,
 		}
 		if parsed {
 			draftDO.Metadata = models.SkillMetadata{Name: md.Name, Description: md.Description}
