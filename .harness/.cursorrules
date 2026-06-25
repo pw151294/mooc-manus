@@ -1,0 +1,240 @@
+# mooc-manus 项目代码风格强制约束
+
+## 一、命名规范
+
+### 1.1 文件命名
+- 规则：蛇形命名 + 单数形式
+- 示例：`skill_provider.go`、`app_config.go`、`a2a_server_config.go`
+- 禁止：驼峰命名、复数形式
+
+### 1.2 包命名
+- 规则：复数形式（领域目录下）
+- 示例：`handlers`、`services`、`repositories`、`models`、`dtos`
+- 特例：子模块包名使用业务名（`agents`、`flows`、`tools`）
+
+### 1.3 结构体命名
+- 规则：大驼峰 + 后缀
+- PO（持久对象）：`AppConfigPO`、`SkillProviderPO`
+- DO（领域对象）：`AppConfigDO`、`SkillDO`
+- DTO（传输对象）：`AppConfigDTO`、`SkillInfoDTO`
+- Request（请求对象）：`AppConfigCreateRequest`、`SkillDraftSaveRequest`
+
+### 1.4 接口命名
+- 规则：大驼峰 + Service/Repository
+- 示例：`AppConfigApplicationService`、`SkillDomainService`、`SkillRepository`
+
+### 1.5 实现类命名
+- 规则：接口名 + Impl（仅适用于Service/Repository层）
+- 示例：`AppConfigApplicationServiceImpl`、`SkillRepositoryImpl`
+- **Handler层例外**：Handler层无接口，不使用Impl后缀，直接定义结构体（如`SkillHandler`、`ToolHandler`）
+
+### 1.6 构造函数命名
+- 规则：New + 类型名
+- **Service/Repository层**：返回接口类型
+  - 示例：`NewAppConfigApplicationService(...) AppConfigApplicationService`
+  - 示例：`NewSkillRepository() SkillRepository`
+- **Handler层**：返回指针实现（无接口）
+  - 示例：`NewSkillHandler(...) *SkillHandler`
+  - 示例：`NewToolHandler(...) *ToolHandler`
+- 禁止：Service/Repository层返回实现类型
+
+### 1.7 方法命名
+- 公开方法：大驼峰，动词在前
+  - 示例：`Create`、`Update`、`GetById`、`List`、`DeleteById`
+- 私有方法：小驼峰
+  - 示例：`getZapLevel`、`parseSkillFiles`
+
+### 1.8 常量命名
+- 规则：蛇形小写或小驼峰，按文件聚合
+- 示例：`defaultModelTemperature`、`postgresDsn`、`sseTimeout`
+
+### 1.9 转换函数命名
+- 规则：Convert{Src}2{Dst}
+- PO↔DO：`ConvertAppConfigPO2DO`、`ConvertAppConfigDO2PO`
+- DO↔DTO：`ConvertAppConfigRequest2DO`、`ConvertAppConfigDO2DTO`
+
+### 1.10 JSON字段命名
+- 规则：小驼峰
+- 示例：`appConfigId`、`baseUrl`、`modelName`、`createdAt`、`updatedAt`
+
+### 1.11 数据库列命名
+- 规则：蛇形小写
+- 示例：`app_config_id`、`base_url`、`model_name`、`created_at`、`updated_at`
+
+### 1.12 时间字段命名
+- 规则：统一使用`CreatedAt`/`UpdatedAt`
+- DB列：`created_at`/`updated_at`
+- JSON：`createdAt`/`updatedAt`
+- **禁止**：`gmtCreate`、`gmtModified`、`gmt_create`
+
+---
+
+## 二、分层编码规则
+
+### 2.1 Repository层规则
+- **职责**：数据持久化，GORM操作
+- **签名**：只接受/返回PO
+- **禁止**：业务逻辑、DO/DTO操作
+- **事务**：使用`client.Transaction(func(tx *gorm.DB) error { ... })`
+
+### 2.2 Domain Service层规则
+- **职责**：核心业务规则
+- **使用对象**：DO（领域对象）
+- **调用下层**：Repository（传入PO）
+- **禁止**：直接操作GORM、直接接触DTO
+
+### 2.3 Application Service层规则
+- **职责**：DTO转换、编排Domain Service
+- **不直接接触**：PO、GORM
+- **主要工作**：Request→DO转换、DO→DTO转换、编排Domain Service
+
+### 2.4 Handler层规则
+- **职责**：HTTP入口、参数解析、响应返回
+- **工作流程**：
+  1. `c.ShouldBindJSON(&req)` 解析请求
+  2. 调用Application Service
+  3. `c.JSON(http.StatusOK, dto)` 返回响应
+- **禁止**：直接调用Domain Service或Repository
+
+---
+
+## 三、三态模型转换规则
+
+### 3.1 PO↔DO转换
+- 函数命名：`ConvertXxxPO2DO`、`ConvertXxxDO2PO`
+- 放置位置：`internal/domains/models/xxx.go`
+- 职责：数据库字段 ↔ 领域对象
+
+### 3.2 DO↔DTO转换
+- 函数命名：`ConvertXxxRequest2DO`、`ConvertXxxDO2DTO`
+- 放置位置：`internal/applications/dtos/xxx.go`
+- 职责：传输对象 ↔ 领域对象
+
+### 3.3 转换流程
+```
+HTTP Request (JSON)
+    ↓ c.ShouldBindJSON
+[DTO] XxxRequest
+    ↓ ConvertXxxRequest2DO
+[DO] XxxDO (领域层流转)
+    ↓ ConvertXxxDO2PO
+[PO] XxxPO (GORM操作)
+    ↓ 数据库
+```
+
+---
+
+## 四、模块初始化范式
+
+### 4.1 强制规则
+- 所有模块初始化**必须**在`api/routers/route.go`的`InitRouter`函数内完成
+- **严格四层顺序**：Repository → Domain Service → Application Service → Handler
+- **禁止**在全局流程外独立完成任何模块的多层初始化
+
+### 4.2 依赖拓扑排序
+- 同一层内，被依赖方必须在依赖方之前初始化
+- **Repository层**：基础repo → Skill repo
+- **基础设施层**（与Repository同级别）：FileStorage（位于`internal/infra/external/file_storage`）
+- **Domain Service层**：基础domain → Skill domain → Agent domain（依赖Skill repo）
+- **Application/Handler层**：无严格顺序，按业务模块分组
+
+### 4.3 注释规范
+- 每层开头用分隔注释：`// ============================================================`
+- 每层内用子注释标识模块分组：`// 1.1 基础模块 Repository`
+
+---
+
+## 五、错误处理规范
+
+### 5.1 不引入业务错误码
+- **禁止**：定义`SKILL_NOT_FOUND`等业务错误码字符串
+- **使用**：标准error + 文本描述
+
+### 5.2 Service层使用哨兵错误
+
+**重要：** 哨兵错误必须统一定义在独立的`pkg/xxxerr`包内（如`pkg/skillerr`），避免领域层反向依赖应用层造成循环依赖。
+
+参考实现：`pkg/skillerr/errors.go`
+
+```go
+// pkg/skillerr/errors.go
+package skillerr
+
+import "errors"
+
+var (
+    ErrNotFound     = errors.New("not found")
+    ErrDuplicate    = errors.New("duplicate")
+    ErrInvalidInput = errors.New("invalid input")
+)
+```
+
+Service层使用时通过包引用：
+```go
+import "mooc-manus/pkg/skillerr"
+
+// 返回时包装
+return fmt.Errorf("skill not found: %w", skillerr.ErrNotFound)
+```
+
+### 5.3 Handler层映射HTTP状态码
+
+```go
+import "mooc-manus/pkg/skillerr"
+
+func writeError(c *gin.Context, err error) {
+    switch {
+    case errors.Is(err, skillerr.ErrNotFound):
+        c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+    case errors.Is(err, skillerr.ErrDuplicate):
+        c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+    case errors.Is(err, skillerr.ErrInvalidInput):
+        c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+    default:
+        c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+    }
+}
+```
+
+---
+
+## 六、响应格式规范
+
+### 6.1 不使用通用响应封装
+- **禁止**：定义`Response[T]`、`SingleResponse`、`PageResponse`等通用类型
+- **直接返回**：`c.JSON(http.StatusOK, dto)`
+
+### 6.2 响应格式
+- 单对象：`c.JSON(http.StatusOK, dto)`
+- 列表：`c.JSON(http.StatusOK, []dtoList)`
+- 无返回值成功：`c.JSON(http.StatusOK, gin.H{"status": "success"})`
+- 错误：`c.JSON(http.StatusXxx, gin.H{"error": err.Error()})`
+
+### 6.3 分页响应（特例）
+- Skill模块新增范式，定义在`dtos/skill.go`：
+```go
+type SkillPageDTO struct {
+    Total    int64        `json:"total"`
+    PageSize int          `json:"pageSize"`
+    PageNum  int          `json:"pageNum"`
+    Records  []SkillInfo  `json:"records"`
+}
+```
+
+---
+
+## 七、禁用API清单
+
+### 7.1 禁止软删除
+- **禁止字段**：`delete_flag`、`deleted_at`
+- **删除方式**：物理删除
+
+### 7.2 禁止多租户字段
+- **禁止字段**：`scope`、`subject_id`、`tenant_id`、`project_id`
+
+### 7.3 禁止通用响应封装
+- **禁止类型**：`Response[T]`、`SingleResponse[T]`、`PageResponse[T]`
+
+### 7.4 时间字段统一
+- **使用**：`createdAt`、`updatedAt`
+- **禁止**：`gmtCreate`、`gmtModified`

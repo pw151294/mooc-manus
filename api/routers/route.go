@@ -3,7 +3,6 @@ package routers
 import (
 	"mooc-manus/api/handlers"
 	"mooc-manus/config"
-	"mooc-manus/internal/applications/services"
 	app_svc "mooc-manus/internal/applications/services"
 	domain_svc "mooc-manus/internal/domains/services"
 	"mooc-manus/internal/domains/services/agents"
@@ -112,7 +111,7 @@ func InitRouter() *gin.Engine {
 			&health_checker.RedisHealthChecker{},
 			&health_checker.PostgresHealthChecker{},
 		}
-		statusAppSvc := services.NewStatusApplicationService(checkers...)
+		statusAppSvc := app_svc.NewStatusApplicationService(checkers...)
 		statusHandler := handlers.NewStatusHandler(statusAppSvc)
 		status.GET("/status", statusHandler.Check)
 	}
@@ -157,7 +156,7 @@ func InitRouter() *gin.Engine {
 		flow.POST("/run", flowHandler.Run)
 	}
 
-	skill := r.Group("/api/v1/skill")
+	skill := r.Group("/api/skill")
 	{
 		skill.POST("/draft/save", skillHandler.DraftSave)
 		skill.POST("/publish", skillHandler.Publish)
@@ -169,7 +168,7 @@ func InitRouter() *gin.Engine {
 		skill.POST("/with/version", skillHandler.WithVersion)
 		skill.GET("/file/download", skillHandler.FileDownload)
 	}
-	skillProvider := r.Group("/api/v1/skill/provider")
+	skillProvider := r.Group("/api/skill/provider")
 	{
 		skillProvider.POST("/import/git", skillHandler.ProviderImportGit)
 		skillProvider.POST("/import/zip", skillHandler.ProviderImportZip)
@@ -179,13 +178,13 @@ func InitRouter() *gin.Engine {
 		skillProvider.POST("/list", skillHandler.ProviderList)
 		skillProvider.POST("/detail", skillHandler.ProviderDetail)
 	}
-	skillImportTask := r.Group("/api/v1/skill/provider/import/task")
+	skillImportTask := r.Group("/api/skill/provider/import/task")
 	{
 		skillImportTask.POST("/detail", skillHandler.ImportTaskDetail)
 		skillImportTask.POST("/list", skillHandler.ImportTaskList)
 		skillImportTask.POST("/delete", skillHandler.ImportTaskDelete)
 	}
-	skillVersion := r.Group("/api/v1/skill/version")
+	skillVersion := r.Group("/api/skill/version")
 	{
 		skillVersion.POST("/create", skillHandler.VersionCreate)
 		skillVersion.POST("/validate", skillHandler.VersionValidate)
