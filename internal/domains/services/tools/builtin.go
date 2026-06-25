@@ -7,14 +7,14 @@ import (
 )
 
 // BuiltinTools 返回所有内置工具实例切片
-// 当前仅包含 loadSkill，未来可扩展 executeSkill / think 等
+// 当前包含 loadSkill 和 executeSkill
 func BuiltinTools(
 	skillRepo repositories.SkillRepository,
 	versionRepo repositories.SkillVersionRepository,
 	storage file_storage.FileStorage,
 	skillRefs []agents.SkillRef,
 ) ([]Tool, error) {
-	tools := make([]Tool, 0, 1)
+	tools := make([]Tool, 0, 2)
 
 	// loadSkill
 	loadSkill := NewLoadSkillTool(skillRepo, versionRepo, storage, skillRefs)
@@ -23,9 +23,13 @@ func BuiltinTools(
 	}
 	tools = append(tools, loadSkill)
 
-	// 未来扩展点：
-	// executeSkill := NewExecuteSkillTool(...)
-	// tools = append(tools, executeSkill)
+	// executeSkill
+	executor := NewStubSkillExecutor() // 占位实现，后续可替换为 DockerSkillExecutor
+	executeSkill := NewExecuteSkillTool(skillRepo, versionRepo, executor, skillRefs)
+	if err := executeSkill.Init(); err != nil {
+		return nil, err
+	}
+	tools = append(tools, executeSkill)
 
 	return tools, nil
 }

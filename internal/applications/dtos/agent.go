@@ -6,8 +6,9 @@ import (
 )
 
 type SkillRef struct {
-	SkillID string `json:"skillId"`
-	Version string `json:"version"`
+	SkillID   string `json:"skillId"`
+	Version   string `json:"version"`
+	SkillName string `json:"skillName"` // Skill 名称，用于 executeSkill 工具按名称查找
 }
 
 type ChatClientRequest struct {
@@ -64,8 +65,9 @@ func ConvertChatClientRequest2Request(clientRequest ChatClientRequest) agents.Ch
 	skillRefs := make([]agents.SkillRef, 0, len(clientRequest.SkillRefs))
 	for _, ref := range clientRequest.SkillRefs {
 		skillRefs = append(skillRefs, agents.SkillRef{
-			SkillID: ref.SkillID,
-			Version: ref.Version,
+			SkillID:   ref.SkillID,
+			Version:   ref.Version,
+			SkillName: ref.SkillName,
 		})
 	}
 	request.SkillRefs = skillRefs

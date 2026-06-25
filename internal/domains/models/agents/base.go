@@ -5,8 +5,9 @@ import (
 )
 
 type SkillRef struct {
-	SkillID string
-	Version string
+	SkillID   string
+	Version   string
+	SkillName string // Skill 名称，用于 executeSkill 工具按名称查找
 }
 
 type ChatRequest struct {
