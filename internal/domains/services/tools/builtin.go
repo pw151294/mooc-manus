@@ -12,6 +12,7 @@ func SkillTools(
 	skillRepo repositories.SkillRepository,
 	versionRepo repositories.SkillVersionRepository,
 	storage file_storage.FileStorage,
+	executor SkillExecutor,
 	skillRefs []agents.SkillRef,
 ) ([]Tool, error) {
 	tools := make([]Tool, 0, 2)
@@ -24,7 +25,6 @@ func SkillTools(
 	tools = append(tools, loadSkill)
 
 	// executeSkill
-	executor := NewStubSkillExecutor() // 占位实现，后续可替换为 DockerSkillExecutor
 	executeSkill := NewExecuteSkillTool(skillRepo, versionRepo, executor, skillRefs)
 	if err := executeSkill.Init(); err != nil {
 		return nil, err

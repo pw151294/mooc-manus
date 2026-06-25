@@ -1,0 +1,469 @@
+package tools
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sync"
+	"time"
+
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/mount"
+	"github.com/docker/docker/client"
+	"github.com/docker/docker/pkg/stdcopy"
+)
+
+// DockerSkillExecutor 基于 Docker 容器的 Skill 执行器
+type DockerSkillExecutor struct {
+	baseDir     string
+	hostBaseDir string
+	dockerHost  string
+	dockerImage string
+
+	dockerClient *client.Client
+	clientOnce   sync.Once
+	clientErr    error
+
+	containerPool sync.Map // key=poolKey, value=*containerContext
+	fileCache     sync.Map // key=poolKey, value=string(workDir)
+}
+
+type containerContext struct {
+	containerID string
+	workDir     string
+	createdAt   time.Time
+}
+
+const (
+	skillExecutionTimeout = 30 * time.Second
+	dockerStopTimeout     = 10 // 秒
+	containerLabelKey     = "created_by"
+	containerLabelValue   = "mooc-manus-skill-executor"
+)
+
+// NewDockerSkillExecutor 创建 Docker 执行器实例
+// baseDir / hostBaseDir 支持相对路径，构造时统一规范为绝对路径
+// 否则 Docker bind mount 会因 Source 非绝对路径被 daemon 拒绝
+func NewDockerSkillExecutor(baseDir, hostBaseDir, dockerHost, dockerImage string) SkillExecutor {
+	if abs, err := filepath.Abs(baseDir); err == nil {
+		baseDir = abs
+	}
+	if hostBaseDir != "" {
+		if abs, err := filepath.Abs(hostBaseDir); err == nil {
+			hostBaseDir = abs
+		}
+	}
+	return &DockerSkillExecutor{
+		baseDir:     baseDir,
+		hostBaseDir: hostBaseDir,
+		dockerHost:  dockerHost,
+		dockerImage: dockerImage,
+	}
+}
+
+// getDockerClient 懒加载 Docker 客户端（线程安全）
+func (e *DockerSkillExecutor) getDockerClient() (*client.Client, error) {
+	e.clientOnce.Do(func() {
+		opts := []client.Opt{client.WithAPIVersionNegotiation()}
+		if e.dockerHost != "" {
+			opts = append(opts, client.WithHost(e.dockerHost))
+		}
+		cli, err := client.NewClientWithOpts(opts...)
+		if err != nil {
+			e.clientErr = wrapErr("getDockerClient", err)
+			return
+		}
+		e.dockerClient = cli
+	})
+	if e.clientErr != nil {
+		return nil, e.clientErr
+	}
+	return e.dockerClient, nil
+}
+
+// buildPoolKey 构建容器池 Key：messageID:skillID:version
+func (e *DockerSkillExecutor) buildPoolKey(ctx SkillExecutionContext) string {
+	return fmt.Sprintf("%s:%s:%s", ctx.MessageID, ctx.SkillID, ctx.Version)
+}
+
+// getSkillWorkDir 获取 Skill 工作目录：${baseDir}/skills/${messageID}/${skillID}-${version}
+func (e *DockerSkillExecutor) getSkillWorkDir(ctx SkillExecutionContext) string {
+	skillDirName := fmt.Sprintf("%s-%s", ctx.SkillID, ctx.Version)
+	return filepath.Join(e.baseDir, "skills", ctx.MessageID, skillDirName)
+}
+
+// getSkillsMessageDir 获取消息级别 skills 目录（容器挂载点）
+func (e *DockerSkillExecutor) getSkillsMessageDir(ctx SkillExecutionContext) string {
+	return filepath.Join(e.baseDir, "skills", ctx.MessageID)
+}
+
+// getOutputsDir 获取输出目录：${baseDir}/outputs/${messageID}
+func (e *DockerSkillExecutor) getOutputsDir(ctx SkillExecutionContext) string {
+	return filepath.Join(e.baseDir, "outputs", ctx.MessageID)
+}
+
+// toHostPath 将容器内路径转换为宿主机路径（Docker-in-Docker 场景）
+// hostBaseDir 为空表示非 DinD 部署，直接使用容器内路径
+func (e *DockerSkillExecutor) toHostPath(containerPath string) string {
+	if e.hostBaseDir == "" {
+		return containerPath
+	}
+	relPath, err := filepath.Rel(e.baseDir, containerPath)
+	if err != nil {
+		return containerPath
+	}
+	return filepath.Join(e.hostBaseDir, relPath)
+}
+
+// scanFiles 递归扫描目录，返回所有文件相对路径集合
+func (e *DockerSkillExecutor) scanFiles(dir string) map[string]bool {
+	files := make(map[string]bool)
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		return files
+	}
+	_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		if rel, e2 := filepath.Rel(dir, path); e2 == nil {
+			files[rel] = true
+		}
+		return nil
+	})
+	return files
+}
+
+// buildEnhancedScript 拼接容器内执行脚本：cd outputs && ln -sf skills/* && export SKILL_DIR && bash
+func (e *DockerSkillExecutor) buildEnhancedScript(ctx SkillExecutionContext, bashCommand string) string {
+	skillDirName := fmt.Sprintf("%s-%s", ctx.SkillID, ctx.Version)
+	skillDir := fmt.Sprintf("/workspace/skills/%s", skillDirName)
+	return fmt.Sprintf("cd /workspace/outputs && ln -sf %s/* /workspace/outputs/ 2>/dev/null; export SKILL_DIR=%s && %s",
+		skillDir, skillDir, bashCommand)
+}
+
+// wrapErr 错误包装
+func wrapErr(operation string, err error) error {
+	return fmt.Errorf("DockerSkillExecutor.%s failed: %w", operation, err)
+}
+
+// Execute 执行入口：根据 MessageID 选择执行模式
+func (e *DockerSkillExecutor) Execute(ctx SkillExecutionContext, bashCommand string) ([]SkillExecutionResult, error) {
+	if ctx.MessageID == "" {
+		return e.executeWithDisposableContainer(ctx, bashCommand)
+	}
+	return e.executeWithContainerPool(ctx, bashCommand)
+}
+
+// createContainer 创建并启动容器，挂载 skillWorkDir 和 outputsDir
+// 返回容器 ID；调用方负责最终清理容器
+func (e *DockerSkillExecutor) createContainer(
+	dockerCtx context.Context,
+	cli *client.Client,
+	skillWorkDir, outputsDir string,
+) (string, error) {
+	// 确保宿主机挂载目录存在
+	if err := os.MkdirAll(skillWorkDir, 0755); err != nil {
+		return "", wrapErr("createContainer.MkdirAll(skillWorkDir)", err)
+	}
+	if err := os.MkdirAll(outputsDir, 0755); err != nil {
+		return "", wrapErr("createContainer.MkdirAll(outputsDir)", err)
+	}
+
+	hostSkillDir := e.toHostPath(skillWorkDir)
+	hostOutputsDir := e.toHostPath(outputsDir)
+
+	cfg := &container.Config{
+		Image: e.dockerImage,
+		// 容器保持运行，等待 exec 注入命令
+		Cmd:        []string{"tail", "-f", "/dev/null"},
+		WorkingDir: "/workspace/outputs",
+		Labels: map[string]string{
+			containerLabelKey: containerLabelValue,
+		},
+	}
+	hostCfg := &container.HostConfig{
+		Mounts: []mount.Mount{
+			{
+				Type:   mount.TypeBind,
+				Source: hostSkillDir,
+				Target: "/workspace/skill",
+			},
+			{
+				Type:   mount.TypeBind,
+				Source: hostOutputsDir,
+				Target: "/workspace/outputs",
+			},
+		},
+		// 资源限制：防止失控脚本耗尽宿主资源
+		Resources: container.Resources{
+			Memory:   512 * 1024 * 1024, // 512 MiB
+			NanoCPUs: 1_000_000_000,     // 1 CPU
+		},
+	}
+
+	resp, err := cli.ContainerCreate(dockerCtx, cfg, hostCfg, nil, nil, "")
+	if err != nil {
+		return "", wrapErr("createContainer.ContainerCreate", err)
+	}
+
+	if err := cli.ContainerStart(dockerCtx, resp.ID, container.StartOptions{}); err != nil {
+		// 启动失败，尽力删除已创建的容器
+		_ = cli.ContainerRemove(dockerCtx, resp.ID, container.RemoveOptions{Force: true})
+		return "", wrapErr("createContainer.ContainerStart", err)
+	}
+
+	return resp.ID, nil
+}
+
+// execScript 在运行中的容器内执行 bash 命令，返回 stdout、stderr 和退出码
+func (e *DockerSkillExecutor) execScript(
+	dockerCtx context.Context,
+	cli *client.Client,
+	containerID, bashCommand string,
+) (stdout, stderr string, exitCode int, err error) {
+	execCfg := container.ExecOptions{
+		AttachStdout: true,
+		AttachStderr: true,
+		Cmd:          []string{"/bin/bash", "-c", bashCommand},
+		WorkingDir:   "/workspace/outputs",
+	}
+
+	execResp, err := cli.ContainerExecCreate(dockerCtx, containerID, execCfg)
+	if err != nil {
+		return "", "", -1, wrapErr("execScript.ExecCreate", err)
+	}
+
+	attachResp, err := cli.ContainerExecAttach(dockerCtx, execResp.ID, container.ExecStartOptions{})
+	if err != nil {
+		return "", "", -1, wrapErr("execScript.ExecAttach", err)
+	}
+	defer attachResp.Close()
+
+	var stdoutBuf, stderrBuf bytes.Buffer
+	// stdcopy.StdCopy 从 Docker 多路复用流中分离 stdout 和 stderr
+	if _, err = stdcopy.StdCopy(&stdoutBuf, &stderrBuf, attachResp.Reader); err != nil {
+		return "", "", -1, wrapErr("execScript.StdCopy", err)
+	}
+
+	// 获取退出码（需等待流读取完成后再 inspect）
+	inspect, err := cli.ContainerExecInspect(dockerCtx, execResp.ID)
+	if err != nil {
+		return stdoutBuf.String(), stderrBuf.String(), -1, wrapErr("execScript.ExecInspect", err)
+	}
+
+	return stdoutBuf.String(), stderrBuf.String(), inspect.ExitCode, nil
+}
+
+// stopAndRemoveContainer 停止并删除容器（force remove，忽略停止错误）
+func (e *DockerSkillExecutor) stopAndRemoveContainer(dockerCtx context.Context, cli *client.Client, containerID string) {
+	timeout := dockerStopTimeout
+	_ = cli.ContainerStop(dockerCtx, containerID, container.StopOptions{Timeout: &timeout})
+	_ = cli.ContainerRemove(dockerCtx, containerID, container.RemoveOptions{Force: true})
+}
+
+// executeWithDisposableContainer 一次性容器模式
+// 流程：准备目录 → 创建容器 → exec 脚本 → 收集产物 → 删除容器 → 返回结果
+func (e *DockerSkillExecutor) executeWithDisposableContainer(ctx SkillExecutionContext, bashCommand string) ([]SkillExecutionResult, error) {
+	cli, err := e.getDockerClient()
+	if err != nil {
+		return nil, err
+	}
+
+	skillWorkDir := e.getSkillWorkDir(ctx)
+	outputsDir := e.getOutputsDir(ctx)
+
+	// 执行前快照 outputs 目录文件集合（用于计算新增产物）
+	beforeFiles := e.scanFiles(outputsDir)
+
+	dockerCtx, cancel := context.WithTimeout(context.Background(), skillExecutionTimeout)
+	defer cancel()
+
+	containerID, err := e.createContainer(dockerCtx, cli, skillWorkDir, outputsDir)
+	if err != nil {
+		return nil, err
+	}
+	// 无论成功与否，最终清理容器
+	defer e.stopAndRemoveContainer(context.Background(), cli, containerID)
+
+	enhancedScript := e.buildEnhancedScript(ctx, bashCommand)
+	stdout, stderr, exitCode, err := e.execScript(dockerCtx, cli, containerID, enhancedScript)
+	if err != nil {
+		return nil, err
+	}
+
+	status := "completed"
+	if exitCode != 0 {
+		status = "failed"
+	}
+
+	// 计算新增产物文件（执行后快照 - 执行前快照）
+	afterFiles := e.scanFiles(outputsDir)
+	var outputFiles []string
+	for rel := range afterFiles {
+		if !beforeFiles[rel] {
+			hostPath := e.toHostPath(filepath.Join(outputsDir, rel))
+			outputFiles = append(outputFiles, hostPath)
+		}
+	}
+
+	result := SkillExecutionResult{
+		Stdout:      stdout,
+		Stderr:      stderr,
+		Status:      status,
+		OutputFiles: outputFiles,
+	}
+	return []SkillExecutionResult{result}, nil
+}
+
+// createPooledContainer 为 messageID 创建并缓存长生命周期容器
+// 挂载 skills/messageID 目录和 outputs/messageID 目录，容器在 CleanupMessage 时销毁
+func (e *DockerSkillExecutor) createPooledContainer(
+	dockerCtx context.Context,
+	cli *client.Client,
+	ctx SkillExecutionContext,
+) (string, error) {
+	skillsMessageDir := e.getSkillsMessageDir(ctx)
+	outputsDir := e.getOutputsDir(ctx)
+
+	if err := os.MkdirAll(skillsMessageDir, 0755); err != nil {
+		return "", wrapErr("createPooledContainer.MkdirAll(skillsMessageDir)", err)
+	}
+	if err := os.MkdirAll(outputsDir, 0755); err != nil {
+		return "", wrapErr("createPooledContainer.MkdirAll(outputsDir)", err)
+	}
+
+	hostSkillsDir := e.toHostPath(skillsMessageDir)
+	hostOutputsDir := e.toHostPath(outputsDir)
+
+	cfg := &container.Config{
+		Image:      e.dockerImage,
+		Cmd:        []string{"tail", "-f", "/dev/null"},
+		WorkingDir: "/workspace/outputs",
+		Labels: map[string]string{
+			containerLabelKey: containerLabelValue,
+			"mooc_message_id": ctx.MessageID,
+		},
+	}
+	hostCfg := &container.HostConfig{
+		Mounts: []mount.Mount{
+			{
+				Type:   mount.TypeBind,
+				Source: hostSkillsDir,
+				Target: "/workspace/skills",
+			},
+			{
+				Type:   mount.TypeBind,
+				Source: hostOutputsDir,
+				Target: "/workspace/outputs",
+			},
+		},
+		Resources: container.Resources{
+			Memory:   512 * 1024 * 1024,
+			NanoCPUs: 1_000_000_000,
+		},
+	}
+
+	resp, err := cli.ContainerCreate(dockerCtx, cfg, hostCfg, nil, nil, "")
+	if err != nil {
+		return "", wrapErr("createPooledContainer.ContainerCreate", err)
+	}
+
+	if err := cli.ContainerStart(dockerCtx, resp.ID, container.StartOptions{}); err != nil {
+		_ = cli.ContainerRemove(dockerCtx, resp.ID, container.RemoveOptions{Force: true})
+		return "", wrapErr("createPooledContainer.ContainerStart", err)
+	}
+
+	return resp.ID, nil
+}
+
+// executeWithContainerPool 容器池复用模式
+// 同一 messageID 复用同一个容器（挂载整个 skills/messageID），脚本可跨多次调用共享文件
+func (e *DockerSkillExecutor) executeWithContainerPool(ctx SkillExecutionContext, bashCommand string) ([]SkillExecutionResult, error) {
+	cli, err := e.getDockerClient()
+	if err != nil {
+		return nil, err
+	}
+
+	poolKey := ctx.MessageID
+	outputsDir := e.getOutputsDir(ctx)
+	beforeFiles := e.scanFiles(outputsDir)
+
+	// 取容器 ID（先从池中查，没有则新建）
+	var containerID string
+	if val, ok := e.containerPool.Load(poolKey); ok {
+		containerID = val.(*containerContext).containerID
+	} else {
+		createCtx, createCancel := context.WithTimeout(context.Background(), skillExecutionTimeout)
+		id, createErr := e.createPooledContainer(createCtx, cli, ctx)
+		createCancel()
+		if createErr != nil {
+			return nil, createErr
+		}
+		e.containerPool.Store(poolKey, &containerContext{
+			containerID: id,
+			workDir:     e.getSkillsMessageDir(ctx),
+			createdAt:   time.Now(),
+		})
+		containerID = id
+	}
+
+	dockerCtx, cancel := context.WithTimeout(context.Background(), skillExecutionTimeout)
+	defer cancel()
+
+	enhancedScript := e.buildEnhancedScript(ctx, bashCommand)
+	stdout, stderr, exitCode, execErr := e.execScript(dockerCtx, cli, containerID, enhancedScript)
+	if execErr != nil {
+		return nil, execErr
+	}
+
+	status := "completed"
+	if exitCode != 0 {
+		status = "failed"
+	}
+
+	afterFiles := e.scanFiles(outputsDir)
+	var outputFiles []string
+	for rel := range afterFiles {
+		if !beforeFiles[rel] {
+			hostPath := e.toHostPath(filepath.Join(outputsDir, rel))
+			outputFiles = append(outputFiles, hostPath)
+		}
+	}
+
+	return []SkillExecutionResult{{
+		Stdout:      stdout,
+		Stderr:      stderr,
+		Status:      status,
+		OutputFiles: outputFiles,
+	}}, nil
+}
+
+// CleanupMessage 清理指定 messageID 关联的容器与 skills 目录（保留 outputs）
+// 在对话/消息生命周期结束时调用
+func (e *DockerSkillExecutor) CleanupMessage(messageID string) error {
+	if messageID == "" {
+		return nil
+	}
+
+	// 停止并删除容器池中对应的容器
+	if val, ok := e.containerPool.LoadAndDelete(messageID); ok {
+		cc := val.(*containerContext)
+		cli, err := e.getDockerClient()
+		if err == nil {
+			e.stopAndRemoveContainer(context.Background(), cli, cc.containerID)
+		}
+	}
+
+	// 删除 skills/messageID 目录（outputs 目录保留，供调用方使用产物）
+	skillsMessageDir := filepath.Join(e.baseDir, "skills", messageID)
+	if err := os.RemoveAll(skillsMessageDir); err != nil && !os.IsNotExist(err) {
+		return wrapErr("CleanupMessage.RemoveAll(skillsMessageDir)", err)
+	}
+
+	return nil
+}
+
+// 编译期接口契约校验
+var _ SkillExecutor = (*DockerSkillExecutor)(nil)

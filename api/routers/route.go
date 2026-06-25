@@ -7,6 +7,7 @@ import (
 	domain_svc "mooc-manus/internal/domains/services"
 	"mooc-manus/internal/domains/services/agents"
 	"mooc-manus/internal/domains/services/flows"
+	"mooc-manus/internal/domains/services/tools"
 	"mooc-manus/internal/infra/external/file_storage"
 	"mooc-manus/internal/infra/external/health_checker"
 	"mooc-manus/internal/infra/repositories"
@@ -54,6 +55,14 @@ func InitRouter() *gin.Engine {
 	skillVersionDomainSvc := domain_svc.NewSkillVersionDomainService(skillVersionRepo, skillRepo, fs)
 	skillImportTaskDomainSvc := domain_svc.NewSkillImportTaskDomainService(taskExecutionRepo, skillDomainSvc, skillProviderDomainSvc, fs)
 
+	// 2.2.5 Skill 执行器（Docker 容器沙箱，基础设施层）
+	skillExecutor := tools.NewDockerSkillExecutor(
+		config.Cfg.Skill.BaseDir,
+		config.Cfg.Skill.HostBaseDir,
+		config.Cfg.Skill.DockerHost,
+		config.Cfg.Skill.DockerImage,
+	)
+
 	// 2.3 Agent 模块 Domain Service（依赖 Skill repo，放在 Skill Domain Service 之后）
 	baseAgentDomainSvc := agents.NewBaseAgentDomainService(
 		appConfigDomainSvc,
@@ -61,6 +70,7 @@ func InitRouter() *gin.Engine {
 		functionDomainSvc,
 		skillRepo,
 		skillVersionRepo,
+		skillExecutor,
 		fs,
 	)
 	a2aDomainSvc := agents.NewA2ADomainService(baseAgentDomainSvc, appConfigDomainSvc, providerDomainSvc, functionDomainSvc)

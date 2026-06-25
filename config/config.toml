@@ -29,3 +29,9 @@ caller_skip = 1
 
 [storage]
 root_dir = "./data" # FileStorage 根目录
+
+[skill]
+base_dir = "./data/skill-runtime"
+host_base_dir = ""
+docker_host = "unix:///var/run/docker.sock"
+docker_image = "python:3.11-slim"

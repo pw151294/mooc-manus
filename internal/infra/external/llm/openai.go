@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"fmt"
 	"mooc-manus/internal/domains/models"
 	"mooc-manus/internal/domains/models/events"
 	"mooc-manus/pkg/logger"
@@ -47,6 +48,9 @@ func (l *OpenAiLLM) Invoke(messages []openai.ChatCompletionMessageParamUnion, to
 	if err != nil {
 		return openai.ChatCompletionMessage{}, err
 	}
+	if len(completion.Choices) == 0 {
+		return openai.ChatCompletionMessage{}, fmt.Errorf("llm返回空响应")
+	}
 	return completion.Choices[0].Message, nil
 }
 
@@ -65,12 +69,14 @@ func (l *OpenAiLLM) StreamingInvoke(messages []openai.ChatCompletionMessageParam
 	acc := openai.ChatCompletionAccumulator{}
 	for stream.Next() {
 		chunk := stream.Current()
-		content := chunk.Choices[0].Delta.Content
-		if content != "" {
-			logger.Debug("got chunk during streaming chat", zap.String("content", content))
-			eventCh <- events.OnMessage(content, nil)
-		}
 		acc.AddChunk(chunk)
+		if len(chunk.Choices) > 0 {
+			content := chunk.Choices[0].Delta.Content
+			if content != "" {
+				logger.Debug("got chunk during streaming chat", zap.String("content", content))
+				eventCh <- events.OnMessage(content, nil)
+			}
+		}
 	}
 	if stream.Err() != nil {
 		eventCh <- events.OnError(stream.Err().Error())
@@ -78,7 +84,6 @@ func (l *OpenAiLLM) StreamingInvoke(messages []openai.ChatCompletionMessageParam
 	close(eventCh)
 	if len(acc.Choices) == 0 {
 		return openai.ChatCompletionMessage{}
-	} else {
-		return acc.Choices[0].Message
 	}
+	return acc.Choices[0].Message
 }

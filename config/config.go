@@ -15,6 +15,7 @@ type GlobalConfig struct {
 	Database     DatabaseConfig `toml:"database"`
 	LoggerConfig LoggerConfig   `toml:"logger"`
 	Storage      StorageConfig  `toml:"storage"`
+	Skill        SkillConfig    `toml:"skill"`
 }
 
 type RedisConfig struct {
@@ -37,6 +38,13 @@ type DatabaseConfig struct {
 
 type StorageConfig struct {
 	RootDir string `toml:"root_dir"` // FileStorage 根目录，默认 ./data
+}
+
+type SkillConfig struct {
+	BaseDir     string `toml:"base_dir"`      // 容器内基础目录，默认 /data/.beedance
+	HostBaseDir string `toml:"host_base_dir"` // 宿主机基础目录（Docker-in-Docker 场景使用），空值表示非容器化部署，直接使用 BaseDir
+	DockerHost  string `toml:"docker_host"`   // Docker daemon 地址
+	DockerImage string `toml:"docker_image"`  // 默认 Skill 执行镜像
 }
 
 type LoggerConfig struct {
