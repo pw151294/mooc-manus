@@ -18,23 +18,93 @@ import (
 func InitRouter() *gin.Engine {
 	r := gin.Default()
 
-	// Initialize repositories
+	// ============================================================
+	// 第一层：Repository 层（按依赖拓扑顺序初始化）
+	// ============================================================
+
+	// 1.1 基础模块 Repository（无外部依赖）
 	appConfigRepo := repositories.NewAppConfigRepository()
 	providerRepo := repositories.NewToolProviderRepository()
 	functionRepo := repositories.NewToolFunctionRepository()
 
-	// Initialize domain services (without agent services yet - need skillRepo first)
+	// 1.2 Skill 模块 Repository（无外部依赖）
+	skillProviderRepo := repositories.NewSkillProviderRepository()
+	skillRepo := repositories.NewSkillRepository()
+	skillVersionRepo := repositories.NewSkillVersionRepository()
+	taskExecutionRepo := repositories.NewTaskExecutionRepository()
+
+	// 1.3 FileStorage（基础设施，与 Repository 同级别）
+	rootDir := "./data"
+	if config.Cfg != nil {
+		rootDir = config.Cfg.Storage.RootDir
+	}
+	fs := file_storage.NewLocalFileStorage(rootDir)
+
+	// ============================================================
+	// 第二层：Domain Service 层（按依赖拓扑顺序初始化）
+	// ============================================================
+
+	// 2.1 基础模块 Domain Service（无跨模块依赖）
 	providerDomainSvc := domain_svc.NewToolProviderDomainService(providerRepo, functionRepo)
 	functionDomainSvc := domain_svc.NewToolFunctionDomainService(functionRepo, providerRepo)
 	appConfigDomainSvc := domain_svc.NewAppConfigDomainService(appConfigRepo, functionDomainSvc)
 
-	// Initialize application services (without agent services yet)
+	// 2.2 Skill 模块 Domain Service（无跨模块依赖）
+	skillProviderDomainSvc := domain_svc.NewSkillProviderDomainService(skillProviderRepo, skillRepo)
+	skillDomainSvc := domain_svc.NewSkillDomainService(skillRepo, skillVersionRepo, skillProviderRepo, fs)
+	skillVersionDomainSvc := domain_svc.NewSkillVersionDomainService(skillVersionRepo, skillRepo, fs)
+	skillImportTaskDomainSvc := domain_svc.NewSkillImportTaskDomainService(taskExecutionRepo, skillDomainSvc, skillProviderDomainSvc, fs)
+
+	// 2.3 Agent 模块 Domain Service（依赖 Skill repo，放在 Skill Domain Service 之后）
+	baseAgentDomainSvc := agents.NewBaseAgentDomainService(
+		appConfigDomainSvc,
+		providerDomainSvc,
+		functionDomainSvc,
+		skillRepo,
+		skillVersionRepo,
+		fs,
+	)
+	a2aDomainSvc := agents.NewA2ADomainService(baseAgentDomainSvc, appConfigDomainSvc, providerDomainSvc, functionDomainSvc)
+	baseFlowDomainSvc := flows.NewBaseFlowDomainService(appConfigDomainSvc, providerDomainSvc, functionDomainSvc)
+
+	// ============================================================
+	// 第三层：Application Service 层（全模块并列）
+	// ============================================================
+
+	// 3.1 基础模块 Application Service
 	appConfigAppSvc := app_svc.NewAppConfigApplicationService(appConfigDomainSvc)
 	providerAppSvc := app_svc.NewToolProviderApplicationService(providerDomainSvc)
 	functionAppSvc := app_svc.NewTooLFunctionApplicationService(functionDomainSvc)
 
-	// Initialize handlers (without agent handler yet)
+	// 3.2 Skill 模块 Application Service
+	skillProviderAppSvc := app_svc.NewSkillProviderApplicationService(skillProviderDomainSvc)
+	skillVersionAppSvc := app_svc.NewSkillVersionApplicationService(skillVersionDomainSvc, skillDomainSvc)
+	skillImportTaskAppSvc := app_svc.NewSkillImportTaskApplicationService(skillImportTaskDomainSvc)
+	skillAppSvc := app_svc.NewSkillApplicationService(skillDomainSvc, skillVersionDomainSvc, skillProviderDomainSvc)
+
+	// 3.3 Agent 模块 Application Service
+	baseAgentAppSvc := app_svc.NewBaseAgentApplicationService(baseAgentDomainSvc)
+	a2aAppSvc := app_svc.NewA2AApplicationService(a2aDomainSvc)
+	baseFlowAppSvc := app_svc.NewFlowApplicationService(baseFlowDomainSvc)
+
+	// ============================================================
+	// 第四层：Handler 层（全模块并列）
+	// ============================================================
+
+	// 4.1 基础模块 Handler
 	toolHandler := handlers.NewToolHandler(providerAppSvc, functionAppSvc)
+	appConfigHandler := handlers.NewAppConfigHandler(appConfigAppSvc)
+
+	// 4.2 Skill 模块 Handler（单一 Handler 持有 4 个 ApplicationService）
+	skillHandler := handlers.NewSkillHandler(skillAppSvc, skillProviderAppSvc, skillVersionAppSvc, skillImportTaskAppSvc)
+
+	// 4.3 Agent 模块 Handler
+	agentHandler := handlers.NewAgentHandler(baseAgentAppSvc, a2aAppSvc)
+	flowHandler := handlers.NewFlowHandler(baseFlowAppSvc)
+
+	// ============================================================
+	// 路由注册
+	// ============================================================
 
 	status := r.Group("/api")
 	{
@@ -49,7 +119,6 @@ func InitRouter() *gin.Engine {
 
 	appConfig := r.Group("/api/app/config")
 	{
-		appConfigHandler := handlers.NewAppConfigHandler(appConfigAppSvc)
 		appConfig.GET("/:id", appConfigHandler.Get)
 		appConfig.PUT("/:id", appConfigHandler.Update)
 		appConfig.POST("", appConfigHandler.Add)
@@ -75,63 +144,6 @@ func InitRouter() *gin.Engine {
 		tool.GET("/function/list", toolHandler.ListFunctionsByProvider)
 	}
 
-	// ============================================================
-	// Skill 模块（阶段 7）
-	// ============================================================
-
-	// 1) Repository
-	skillProviderRepo := repositories.NewSkillProviderRepository()
-	skillRepo := repositories.NewSkillRepository()
-	skillVersionRepo := repositories.NewSkillVersionRepository()
-	taskExecutionRepo := repositories.NewTaskExecutionRepository()
-
-	// 2) FileStorage
-	rootDir := "./data"
-	if config.Cfg != nil {
-		rootDir = config.Cfg.Storage.RootDir
-	}
-	fs := file_storage.NewLocalFileStorage(rootDir)
-
-	// 3) Domain Service
-	skillProviderDomainSvc := domain_svc.NewSkillProviderDomainService(skillProviderRepo, skillRepo)
-	skillDomainSvc := domain_svc.NewSkillDomainService(skillRepo, skillVersionRepo, skillProviderRepo, fs)
-	skillVersionDomainSvc := domain_svc.NewSkillVersionDomainService(skillVersionRepo, skillRepo, fs)
-	skillImportTaskDomainSvc := domain_svc.NewSkillImportTaskDomainService(taskExecutionRepo, skillDomainSvc, skillProviderDomainSvc, fs)
-
-	// 4) Application Service
-	skillProviderAppSvc := app_svc.NewSkillProviderApplicationService(skillProviderDomainSvc)
-	skillVersionAppSvc := app_svc.NewSkillVersionApplicationService(skillVersionDomainSvc, skillDomainSvc)
-	skillImportTaskAppSvc := app_svc.NewSkillImportTaskApplicationService(skillImportTaskDomainSvc)
-	skillAppSvc := app_svc.NewSkillApplicationService(skillDomainSvc, skillVersionDomainSvc, skillProviderDomainSvc)
-
-	// 5) Handler（单一 SkillHandler 持有全部 4 个 ApplicationService）
-	skillHandler := handlers.NewSkillHandler(skillAppSvc, skillProviderAppSvc, skillVersionAppSvc, skillImportTaskAppSvc)
-
-	// ============================================================
-	// Agent 模块（依赖 Skill 模块的 skillRepo / skillVersionRepo / fs）
-	// ============================================================
-	baseAgentDomainSvc := agents.NewBaseAgentDomainService(
-		appConfigDomainSvc,
-		providerDomainSvc,
-		functionDomainSvc,
-		skillRepo,
-		skillVersionRepo,
-		fs,
-	)
-	a2aDomainSvc := agents.NewA2ADomainService(baseAgentDomainSvc, appConfigDomainSvc, providerDomainSvc, functionDomainSvc)
-	baseFlowDomainSvc := flows.NewBaseFlowDomainService(appConfigDomainSvc, providerDomainSvc, functionDomainSvc)
-
-	baseAgentAppSvc := app_svc.NewBaseAgentApplicationService(baseAgentDomainSvc)
-	a2aAppSvc := app_svc.NewA2AApplicationService(a2aDomainSvc)
-	baseFlowAppSvc := app_svc.NewFlowApplicationService(baseFlowDomainSvc)
-
-	agentHandler := handlers.NewAgentHandler(baseAgentAppSvc, a2aAppSvc)
-	flowHandler := handlers.NewFlowHandler(baseFlowAppSvc)
-
-	// ============================================================
-	// 路由注册
-	// ============================================================
-
 	agent := r.Group("/api/agent")
 	{
 		agent.POST("/chat", agentHandler.Chat)
@@ -145,9 +157,6 @@ func InitRouter() *gin.Engine {
 		flow.POST("/run", flowHandler.Run)
 	}
 
-	// 6) 路由注册（4 个分组，27 个接口）
-
-	// 6) 路由注册（4 个分组，27 个接口）
 	skill := r.Group("/api/v1/skill")
 	{
 		skill.POST("/draft/save", skillHandler.DraftSave)

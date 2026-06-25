@@ -3,6 +3,7 @@ package handlers
 import (
 	"mooc-manus/internal/applications/dtos"
 	"mooc-manus/internal/applications/services"
+	"mooc-manus/internal/domains/models/prompts"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -27,6 +28,7 @@ func (h *AgentHandler) Chat(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	clientRequest.SystemPrompt = prompts.GetSRESystemPrompt()
 	h.baseAgentAppSvc.Chat(clientRequest, c.Writer)
 }
 
