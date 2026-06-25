@@ -6,9 +6,9 @@ import (
 	"mooc-manus/internal/infra/repositories"
 )
 
-// BuiltinTools 返回所有内置工具实例切片
-// 当前包含 loadSkill 和 executeSkill
-func BuiltinTools(
+// SkillTools 返回 Skill 专属内置工具实例切片（loadSkill + executeSkill）
+// 仅当 skillRefs 非空时应调用此方法
+func SkillTools(
 	skillRepo repositories.SkillRepository,
 	versionRepo repositories.SkillVersionRepository,
 	storage file_storage.FileStorage,

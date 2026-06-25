@@ -24,6 +24,7 @@ type SkillRepository interface {
 	GetById(id string) (models.SkillPO, error)
 	GetByName(name string) (models.SkillPO, bool, error)
 	GetByIds(ids []string) ([]models.SkillPO, error)
+	GetByNames(names []string) ([]models.SkillPO, error)
 	Page(filter SkillListFilter, pageNum, pageSize int) ([]models.SkillPO, int64, error)
 	List(filter SkillListFilter) ([]models.SkillPO, error)
 	CountByProviderId(providerId string) (int64, error)
@@ -77,6 +78,17 @@ func (r *SkillRepositoryImpl) GetByIds(ids []string) ([]models.SkillPO, error) {
 		return pos, nil
 	}
 	err := r.client.Where("skill_id IN ?", ids).Find(&pos).Error
+	return pos, err
+}
+
+// GetByNames 批量按 skill_name 查询（用于 Skill 系统提示词拼接）
+// 不存在的 name 会被跳过，返回查询到的部分结果
+func (r *SkillRepositoryImpl) GetByNames(names []string) ([]models.SkillPO, error) {
+	var pos []models.SkillPO
+	if len(names) == 0 {
+		return pos, nil
+	}
+	err := r.client.Where("skill_name IN ?", names).Find(&pos).Error
 	return pos, err
 }
 

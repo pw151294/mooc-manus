@@ -12,6 +12,7 @@ import (
 	"mooc-manus/internal/infra/external/llm"
 	"mooc-manus/internal/infra/repositories"
 	"mooc-manus/pkg/logger"
+	"strings"
 	"sync"
 
 	"go.uber.org/zap"
@@ -186,14 +187,94 @@ func (s *BaseAgentDomainServiceImpl) createBaseAgent(request agents.ChatRequest)
 	}
 	logger.Info("init tools success")
 
-	// 追加内置工具
-	builtinTools, err := tools.BuiltinTools(s.skillRepo, s.versionRepo, s.storage, request.SkillRefs)
-	if err != nil {
-		logger.Error("init builtin tools failed", zap.Error(err))
-		return nil, err
+	// 追加 Skill 内置工具（仅在 SkillRefs 非空时）
+	if len(request.SkillRefs) > 0 {
+		skillTools, err := tools.SkillTools(s.skillRepo, s.versionRepo, s.storage, request.SkillRefs)
+		if err != nil {
+			logger.Error("init skill tools failed", zap.Error(err))
+			return nil, err
+		}
+		baseTools = append(baseTools, skillTools...)
+		logger.Info("init skill tools success", zap.Int("skill_count", len(request.SkillRefs)))
 	}
-	baseTools = append(baseTools, builtinTools...)
-	logger.Info("init builtin tools success")
 
-	return NewBaseAgent(appConfig.AgentConfig, openAiLLM, chatMemory, baseTools, request.SystemPrompt), nil
+	// 构建系统提示词（拼接 Skill 元信息）
+	systemPrompt := request.SystemPrompt
+	if len(request.SkillRefs) > 0 {
+		skillsPrompt, err := s.buildSkillsSystemPrompt(request.SkillRefs)
+		if err != nil {
+			logger.Warn("build skills system prompt failed", zap.Error(err))
+			// 失败时仍可继续，但记录警告
+		} else if skillsPrompt != "" {
+			// 拼接顺序：原 systemPrompt + "\n\n" + skillsPrompt（对齐 Beedance BaseAgent.java:863-864）
+			systemPrompt = systemPrompt + "\n\n" + skillsPrompt
+			logger.Info("skills system prompt injected", zap.Int("skill_count", len(request.SkillRefs)))
+		}
+	}
+
+	return NewBaseAgent(appConfig.AgentConfig, openAiLLM, chatMemory, baseTools, systemPrompt), nil
+}
+
+// skillUsageRules Skill 使用规则常量（对齐 Beedance BaseAgent.java:163-179）
+const skillUsageRules = `
+### Skill Usage Rules (MUST follow)
+
+**Step 1 (Required):** Call ` + "`loadSkill(skillName)`" + ` to read the Skill documentation.
+
+**Step 2:** Follow the Skill documentation's instructions to determine your next action:
+- If the documentation defines an **output format/syntax** (e.g., Markdown blocks, custom tags): output that syntax directly in your response. Do NOT call ` + "`executeSkill`" + `.
+- If the documentation requires **script execution**: call ` + "`executeSkill(skillName, bash)`" + `. Write output files ONLY to ` + "`/workspace/outputs/`" + `.
+
+**Constraints:**
+- Always call ` + "`loadSkill`" + ` before ` + "`executeSkill`" + `. Never skip ` + "`loadSkill`" + `.
+- ` + "`skillName`" + ` MUST match one of the names listed above exactly. Do NOT invent skill names.
+- After a successful ` + "`executeSkill`" + ` that generates a file, do not repeat the file content or add download links in your response.
+`
+
+// buildSkillsSystemPrompt 构建 Skill 相关系统提示词段落
+// 参考 Beedance BaseAgent.buildSkillsPromptSection (BaseAgent.java:881-912)
+func (s *BaseAgentDomainServiceImpl) buildSkillsSystemPrompt(skillRefs []agents.SkillRef) (string, error) {
+	if len(skillRefs) == 0 {
+		return "", nil
+	}
+
+	// 从 SkillRef 中提取 skillName
+	skillNames := make([]string, 0, len(skillRefs))
+	for _, ref := range skillRefs {
+		if ref.SkillName != "" {
+			skillNames = append(skillNames, ref.SkillName)
+		}
+	}
+
+	if len(skillNames) == 0 {
+		return "", nil
+	}
+
+	// 批量查询 Skill 信息
+	skillPOs, err := s.skillRepo.GetByNames(skillNames)
+	if err != nil {
+		return "", fmt.Errorf("query skills by names failed: %w", err)
+	}
+
+	if len(skillPOs) == 0 {
+		logger.Warn("no skills found for provided skillNames", zap.Strings("skill_names", skillNames))
+		return "", nil
+	}
+
+	// 拼接 Skill 列表（格式：- **{skillName}**: {description}）
+	var skillListBuilder strings.Builder
+	for _, po := range skillPOs {
+		skillListBuilder.WriteString(fmt.Sprintf("- **%s**", po.SkillName))
+		if po.Description != "" {
+			skillListBuilder.WriteString(fmt.Sprintf(": %s", po.Description))
+		}
+		skillListBuilder.WriteString("\n")
+	}
+
+	// 拼接最终段落（对齐 Beedance BaseAgent.java:906-911）
+	return fmt.Sprintf(`## Available Skills
+You have access to the following skills.
+
+%s
+%s`, skillListBuilder.String(), skillUsageRules), nil
 }
