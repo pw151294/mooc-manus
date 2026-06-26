@@ -334,14 +334,28 @@ class SSEClient {
   private eventSource: EventSource | null = null;
   private timeout: number = 60000; // 1分钟超时
   private timeoutTimer: NodeJS.Timeout | null = null;
+  private isActive: boolean = false; // 防止重复订阅
 
   subscribe(url: string, handlers: {
+    onOpen?: () => void;
     onEvent: (eventType: string, data: any) => void;
     onError?: (error: any) => void;
     onComplete?: () => void;
   }) {
+    // 防止重复订阅
+    if (this.isActive) {
+      throw new Error('SSE连接已存在,请先关闭');
+    }
+
     this.eventSource = new EventSource(url);
+    this.isActive = true;
     this.resetTimeout();
+
+    // 连接建立回调
+    this.eventSource.addEventListener('open', () => {
+      console.log('SSE连接已建立');
+      handlers.onOpen?.();
+    });
 
     // 监听所有事件类型
     const eventTypes: SSEEventType[] = [
@@ -353,18 +367,27 @@ class SSEClient {
     eventTypes.forEach(type => {
       this.eventSource!.addEventListener(type, (e: MessageEvent) => {
         this.resetTimeout(); // 收到消息重置超时
-        const data = JSON.parse(e.data);
-        handlers.onEvent(type, data);
         
-        // done事件自动关闭
-        if (type === 'done') {
-          this.close();
-          handlers.onComplete?.();
+        // JSON解析容错
+        try {
+          const data = JSON.parse(e.data);
+          handlers.onEvent(type, data);
+          
+          // done事件自动关闭
+          if (type === 'done') {
+            this.close();
+            handlers.onComplete?.();
+          }
+        } catch (err) {
+          console.error('SSE数据解析失败:', err, 'raw data:', e.data);
+          handlers.onError?.(new Error('数据格式错误'));
         }
       });
     });
 
+    // 错误处理
     this.eventSource.onerror = (error) => {
+      console.error('SSE连接错误:', error);
       this.close();
       handlers.onError?.(error);
     };
@@ -379,6 +402,7 @@ class SSEClient {
   }
 
   close() {
+    this.isActive = false;
     if (this.timeoutTimer) clearTimeout(this.timeoutTimer);
     if (this.eventSource) {
       this.eventSource.close();
@@ -553,12 +577,47 @@ VITE_API_BASE_URL=http://localhost:8080
 VITE_API_BASE_URL=https://your-production-api.com
 ```
 
-### 7.4 技术特点
+### 7.4 Vite跨域代理配置
+
+**vite.config.ts:**
+
+```typescript
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+
+export default defineConfig({
+  plugins: [react()],
+  server: {
+    port: 3000,
+    proxy: {
+      '/api': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+        // 如需去除/api前缀,取消下行注释:
+        // rewrite: (path) => path.replace(/^\/api/, '')
+      }
+    }
+  },
+  resolve: {
+    alias: {
+      '@': '/src'
+    }
+  }
+})
+```
+
+**说明:**
+- `target`: 后端服务地址
+- `changeOrigin`: true表示修改请求头的origin字段
+- `rewrite`: 可选,是否重写路径(去除/api前缀)
+
+### 7.5 技术特点
 
 - **适配后端响应格式** - 后端无统一封装,直接透传data
 - **统一错误处理** - 根据HTTP状态码映射错误提示
 - **环境变量管理** - 开发/生产环境API地址分离
 - **TypeScript类型安全** - 所有接口都有完整类型定义
+- **跨域代理** - 开发环境通过Vite代理解决跨域问题
 
 
 ---
@@ -708,17 +767,35 @@ echo "✅ 后端子仓库添加完成"
 
 # 3. 创建前端子仓库
 echo "📦 创建前端子仓库..."
-mkdir mooc-manus-web
-cd mooc-manus-web
-git init
-echo "# mooc-manus-web" > README.md
-git add README.md
-git commit -m "Initial commit"
-cd ..
+echo "⚠️  请确保已在GitHub创建 mooc-manus-web 远程仓库"
+read -p "请输入前端仓库URL (如: https://github.com/pw151294/mooc-manus-web.git): " FRONTEND_REPO_URL
+
+if [ -z "$FRONTEND_REPO_URL" ]; then
+  echo "❌ 未提供前端仓库URL,退出"
+  exit 1
+fi
+
+# 克隆前端空仓库或初始化本地仓库
+git clone "$FRONTEND_REPO_URL" mooc-manus-web || {
+  # 如果远程仓库不存在,本地初始化后关联
+  mkdir mooc-manus-web
+  cd mooc-manus-web
+  git init
+  echo "# mooc-manus-web" > README.md
+  git add README.md
+  git commit -m "Initial commit"
+  git remote add origin "$FRONTEND_REPO_URL"
+  git push -u origin master || echo "⚠️  推送失败,请手动创建远程仓库后再推送"
+  cd ..
+}
+echo "✅ 前端子仓库初始化完成"
 
 # 4. 添加前端子仓库为Submodule
-git submodule add ./mooc-manus-web mooc-manus-web
-echo "✅ 前端子仓库添加完成"
+cd ..
+rm -rf mooc-manus-all/mooc-manus-web  # 删除刚才clone的目录
+cd mooc-manus-all
+git submodule add "$FRONTEND_REPO_URL" mooc-manus-web
+echo "✅ 前端子仓库作为Submodule添加完成"
 
 # 5. 创建总仓库README
 cat > README.md << 'READMEEOF'
