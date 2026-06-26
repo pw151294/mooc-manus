@@ -93,7 +93,7 @@ func InitRouter() *gin.Engine {
 	skillAppSvc := app_svc.NewSkillApplicationService(skillDomainSvc, skillVersionDomainSvc, skillProviderDomainSvc)
 
 	// 3.3 Agent 模块 Application Service
-	baseAgentAppSvc := app_svc.NewBaseAgentApplicationService(baseAgentDomainSvc)
+	baseAgentAppSvc := app_svc.NewBaseAgentApplicationService(baseAgentDomainSvc, skillExecutor)
 	a2aAppSvc := app_svc.NewA2AApplicationService(a2aDomainSvc)
 	baseFlowAppSvc := app_svc.NewFlowApplicationService(baseFlowDomainSvc)
 

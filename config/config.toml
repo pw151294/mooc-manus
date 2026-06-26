@@ -37,6 +37,6 @@ docker_host = "unix:///var/run/docker.sock"
 docker_image = "python:3.11-slim"
 
 [skill.env]
-SRE_MCP_SERVER_URL = "http://10.103.139.161:9605"
+SRE_MCP_SERVER_URL = "http://10.103.139.101:9605"
 SRE_WORKSPACE_ID = "17"
-SRE_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiIxIiwiYWNjb3VudCI6ImFkbWluIiwiZXhwIjoxNzgyMzkzMjg2LCJpYXQiOjE3ODIzODk2ODZ9.t2dMaf4tLT6NHyLQ1sOQB2uwFiDx2GIO7SiObmJU4LE"
+SRE_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiIxIiwiYWNjb3VudCI6ImFkbWluIiwiZXhwIjoxNzgyNDY0OTQ5LCJpYXQiOjE3ODI0NjEzNDl9.wyGvtnSdbttbBPuZnunuv-xZZZAHBMwCOiA12ZXu7nU"

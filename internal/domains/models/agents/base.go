@@ -14,6 +14,7 @@ type ChatRequest struct {
 	Streaming      bool
 	SystemPrompt   string
 	ConversationId string
+	MessageId      string // SSE 流消息 ID，由 application 层从 sse.StartChat 注入
 	Query          string
 	AppConfigId    string
 	FunctionIds    []string
@@ -24,6 +25,7 @@ type ChatRequest struct {
 
 type AgentPlanCreateRequest struct {
 	ConversationId string
+	MessageId      string // SSE 流消息 ID，由 application 层注入，透传给 ChatRequest
 	Query          string
 	AppConfigId    string
 	Files          []file.File
@@ -31,6 +33,7 @@ type AgentPlanCreateRequest struct {
 
 type AgentPlanUpdateRequest struct {
 	ConversationId string
+	MessageId      string // SSE 流消息 ID，由 application 层注入，透传给 ChatRequest
 	AppConfigId    string
 	PlanId         string
 	StepId         string
@@ -49,6 +52,7 @@ type AgentExecuteRequest struct {
 func ConvertPlanCreateRequest2ChatRequest(planCreateRequest AgentPlanCreateRequest) ChatRequest {
 	request := ChatRequest{}
 	request.ConversationId = planCreateRequest.ConversationId
+	request.MessageId = planCreateRequest.MessageId
 	request.Query = planCreateRequest.Query
 	request.AppConfigId = planCreateRequest.AppConfigId
 	request.Files = planCreateRequest.Files
@@ -58,6 +62,7 @@ func ConvertPlanCreateRequest2ChatRequest(planCreateRequest AgentPlanCreateReque
 func ConvertPlanUpdateRequest2ChatRequest(planUpdateRequest AgentPlanUpdateRequest) ChatRequest {
 	request := ChatRequest{}
 	request.ConversationId = planUpdateRequest.ConversationId
+	request.MessageId = planUpdateRequest.MessageId
 	request.AppConfigId = planUpdateRequest.AppConfigId
 	return request
 }

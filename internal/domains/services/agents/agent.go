@@ -86,13 +86,6 @@ func (s *BaseAgentDomainServiceImpl) Chat(request agents.ChatRequest, eventCh ch
 		wg.Wait()
 		logger.Info("agent invoke end")
 
-		// 对话结束后清理容器池（仅在使用了 SkillRefs 且 ConversationId 非空时有实际效果）
-		if len(request.SkillRefs) > 0 && request.ConversationId != "" {
-			if err := s.skillExecutor.CleanupMessage(request.ConversationId); err != nil {
-				logger.Warn("cleanup skill executor failed", zap.Error(err), zap.String("conversation_id", request.ConversationId))
-			}
-		}
-
 		close(eventCh)
 	}()
 }
@@ -200,7 +193,7 @@ func (s *BaseAgentDomainServiceImpl) createBaseAgent(request agents.ChatRequest)
 
 	// 追加 Skill 内置工具（仅在 SkillRefs 非空时）
 	if len(request.SkillRefs) > 0 {
-		skillTools, err := tools.SkillTools(s.skillRepo, s.versionRepo, s.storage, s.skillExecutor, request.SkillRefs)
+		skillTools, err := tools.SkillTools(s.skillRepo, s.versionRepo, s.storage, s.skillExecutor, request.SkillRefs, request.MessageId)
 		if err != nil {
 			logger.Error("init skill tools failed", zap.Error(err))
 			return nil, err

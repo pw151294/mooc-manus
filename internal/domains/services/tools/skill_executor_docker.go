@@ -14,6 +14,10 @@ import (
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
+
+	"mooc-manus/pkg/logger"
+
+	"go.uber.org/zap"
 )
 
 // DockerSkillExecutor 基于 Docker 容器的 Skill 执行器
@@ -57,6 +61,15 @@ func NewDockerSkillExecutor(baseDir, hostBaseDir, dockerHost, dockerImage string
 			hostBaseDir = abs
 		}
 	}
+
+	logger.Info("[skill-exec] DockerSkillExecutor initialized",
+		zap.String("base_dir", baseDir),
+		zap.String("host_base_dir", hostBaseDir),
+		zap.String("docker_host", dockerHost),
+		zap.String("docker_image", dockerImage),
+		zap.Strings("static_env_keys", envKeys(staticEnv)),
+	)
+
 	return &DockerSkillExecutor{
 		baseDir:     baseDir,
 		hostBaseDir: hostBaseDir,
@@ -157,12 +170,47 @@ func (e *DockerSkillExecutor) buildEnvList() []string {
 	return envList
 }
 
-// buildEnhancedScript 拼接容器内执行脚本：cd outputs && ln -sf skills/* && export SKILL_DIR && bash
+// envKeys 返回 env map 的 key 列表（用于日志脱敏，避免打印敏感 token 值）
+func envKeys(m map[string]string) []string {
+	if len(m) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// SkillFilesMissingExitCode 标识"挂载目录里没有 skill 文件"的特殊退出码（T4）
+// Go 侧 execScript 完成后判断 exitCode == 70，包装成可读的错误回灌给 LLM
+const SkillFilesMissingExitCode = 70
+
+// buildEnhancedScript 拼接容器内执行脚本：检查 skill 文件存在性 → 软链到 outputs → export → 执行业务命令
+// 使用 set -e + 显式存在性检查 + exit 70，确保 skill 文件缺失时在最近位置硬失败
 func (e *DockerSkillExecutor) buildEnhancedScript(ctx SkillExecutionContext, bashCommand string) string {
 	skillDirName := fmt.Sprintf("%s-%s", ctx.SkillID, ctx.Version)
 	skillDir := fmt.Sprintf("/workspace/skills/%s", skillDirName)
-	return fmt.Sprintf("cd /workspace/outputs && ln -sf %s/* /workspace/outputs/ 2>/dev/null; export SKILL_DIR=%s && %s",
+	finalScript := fmt.Sprintf(`set -e
+cd /workspace/outputs
+if ! ls %s/*.py >/dev/null 2>&1 && ! ls %s/SKILL.md >/dev/null 2>&1; then
+  echo "[skill-exec] FATAL: no skill files found in %s" >&2
+  exit %d
+fi
+ln -sf %s/* /workspace/outputs/
+export SKILL_DIR=%s
+%s`,
+		skillDir, skillDir, skillDir, SkillFilesMissingExitCode,
 		skillDir, skillDir, bashCommand)
+
+	logger.Info("[skill-exec] buildEnhancedScript",
+		zap.String("skill_dir_in_container", skillDir),
+		zap.String("original_bash_command", bashCommand),
+		zap.String("enhanced_script", finalScript),
+	)
+
+	return finalScript
 }
 
 // wrapErr 错误包装
@@ -172,6 +220,14 @@ func wrapErr(operation string, err error) error {
 
 // Execute 执行入口：根据 MessageID 选择执行模式
 func (e *DockerSkillExecutor) Execute(ctx SkillExecutionContext, bashCommand string) ([]SkillExecutionResult, error) {
+	logger.Info("[skill-exec] Execute called",
+		zap.String("skill_id", ctx.SkillID),
+		zap.String("version", ctx.Version),
+		zap.String("message_id", ctx.MessageID),
+		zap.Bool("use_container_pool", ctx.MessageID != ""),
+		zap.String("bash_command", bashCommand),
+	)
+
 	if ctx.MessageID == "" {
 		return e.executeWithDisposableContainer(ctx, bashCommand)
 	}
@@ -180,9 +236,11 @@ func (e *DockerSkillExecutor) Execute(ctx SkillExecutionContext, bashCommand str
 
 // createContainer 创建并启动容器，挂载 skillWorkDir 和 outputsDir
 // 返回容器 ID；调用方负责最终清理容器
+// 挂载到容器内 /workspace/skills/${SkillID}-${Version}/，与 buildEnhancedScript 引用路径对齐
 func (e *DockerSkillExecutor) createContainer(
 	dockerCtx context.Context,
 	cli *client.Client,
+	ctx SkillExecutionContext,
 	skillWorkDir, outputsDir string,
 ) (string, error) {
 	// 确保宿主机挂载目录存在
@@ -195,6 +253,19 @@ func (e *DockerSkillExecutor) createContainer(
 
 	hostSkillDir := e.toHostPath(skillWorkDir)
 	hostOutputsDir := e.toHostPath(outputsDir)
+	// 容器内挂载点：/workspace/skills/${SkillID}-${Version}/
+	containerSkillMount := fmt.Sprintf("/workspace/skills/%s-%s", ctx.SkillID, ctx.Version)
+
+	logger.Info("[skill-exec] createContainer paths (disposable mode)",
+		zap.String("skill_work_dir", skillWorkDir),
+		zap.String("outputs_dir", outputsDir),
+		zap.String("host_skill_dir_mount_source", hostSkillDir),
+		zap.String("host_outputs_dir_mount_source", hostOutputsDir),
+		zap.String("container_mount_target_skill", containerSkillMount),
+		zap.String("container_mount_target_outputs", "/workspace/outputs"),
+		zap.Strings("env_keys", envKeys(e.staticEnv)),
+		zap.String("docker_image", e.dockerImage),
+	)
 
 	cfg := &container.Config{
 		Image: e.dockerImage,
@@ -211,7 +282,7 @@ func (e *DockerSkillExecutor) createContainer(
 			{
 				Type:   mount.TypeBind,
 				Source: hostSkillDir,
-				Target: "/workspace/skill",
+				Target: containerSkillMount,
 			},
 			{
 				Type:   mount.TypeBind,
@@ -231,6 +302,8 @@ func (e *DockerSkillExecutor) createContainer(
 		return "", wrapErr("createContainer.ContainerCreate", err)
 	}
 
+	logger.Info("[skill-exec] disposable container created", zap.String("container_id", resp.ID))
+
 	if err := cli.ContainerStart(dockerCtx, resp.ID, container.StartOptions{}); err != nil {
 		// 启动失败，尽力删除已创建的容器
 		_ = cli.ContainerRemove(dockerCtx, resp.ID, container.RemoveOptions{Force: true})
@@ -246,6 +319,11 @@ func (e *DockerSkillExecutor) execScript(
 	cli *client.Client,
 	containerID, bashCommand string,
 ) (stdout, stderr string, exitCode int, err error) {
+	logger.Info("[skill-exec] execScript begin",
+		zap.String("container_id", containerID),
+		zap.String("bash_command", bashCommand),
+	)
+
 	execCfg := container.ExecOptions{
 		AttachStdout: true,
 		AttachStderr: true,
@@ -276,6 +354,12 @@ func (e *DockerSkillExecutor) execScript(
 		return stdoutBuf.String(), stderrBuf.String(), -1, wrapErr("execScript.ExecInspect", err)
 	}
 
+	logger.Info("[skill-exec] execScript completed",
+		zap.Int("exit_code", inspect.ExitCode),
+		zap.Int("stdout_bytes", stdoutBuf.Len()),
+		zap.Int("stderr_bytes", stderrBuf.Len()),
+	)
+
 	return stdoutBuf.String(), stderrBuf.String(), inspect.ExitCode, nil
 }
 
@@ -303,7 +387,7 @@ func (e *DockerSkillExecutor) executeWithDisposableContainer(ctx SkillExecutionC
 	dockerCtx, cancel := context.WithTimeout(context.Background(), skillExecutionTimeout)
 	defer cancel()
 
-	containerID, err := e.createContainer(dockerCtx, cli, skillWorkDir, outputsDir)
+	containerID, err := e.createContainer(dockerCtx, cli, ctx, skillWorkDir, outputsDir)
 	if err != nil {
 		return nil, err
 	}
@@ -319,6 +403,11 @@ func (e *DockerSkillExecutor) executeWithDisposableContainer(ctx SkillExecutionC
 	status := "completed"
 	if exitCode != 0 {
 		status = "failed"
+	}
+	if exitCode == SkillFilesMissingExitCode {
+		stderr = fmt.Sprintf("Skill 文件缺失（exit %d）：容器挂载目录里没有可执行的 skill 文件。"+
+			"通常原因：宿主机 skill 工作目录未准备好，或挂载路径不一致。\n原始 stderr: %s",
+			SkillFilesMissingExitCode, stderr)
 	}
 
 	// 计算新增产物文件（执行后快照 - 执行前快照）
@@ -360,6 +449,18 @@ func (e *DockerSkillExecutor) createPooledContainer(
 	hostSkillsDir := e.toHostPath(skillsMessageDir)
 	hostOutputsDir := e.toHostPath(outputsDir)
 
+	logger.Info("[skill-exec] createPooledContainer paths (pool mode)",
+		zap.String("skills_message_dir", skillsMessageDir),
+		zap.String("outputs_dir", outputsDir),
+		zap.String("host_skills_dir_mount_source", hostSkillsDir),
+		zap.String("host_outputs_dir_mount_source", hostOutputsDir),
+		zap.String("container_mount_target_skills", "/workspace/skills"),
+		zap.String("container_mount_target_outputs", "/workspace/outputs"),
+		zap.Strings("env_keys", envKeys(e.staticEnv)),
+		zap.String("docker_image", e.dockerImage),
+		zap.String("message_id", ctx.MessageID),
+	)
+
 	cfg := &container.Config{
 		Image:      e.dockerImage,
 		Cmd:        []string{"tail", "-f", "/dev/null"},
@@ -393,6 +494,8 @@ func (e *DockerSkillExecutor) createPooledContainer(
 	if err != nil {
 		return "", wrapErr("createPooledContainer.ContainerCreate", err)
 	}
+
+	logger.Info("[skill-exec] pooled container created", zap.String("container_id", resp.ID))
 
 	if err := cli.ContainerStart(dockerCtx, resp.ID, container.StartOptions{}); err != nil {
 		_ = cli.ContainerRemove(dockerCtx, resp.ID, container.RemoveOptions{Force: true})
@@ -446,6 +549,11 @@ func (e *DockerSkillExecutor) executeWithContainerPool(ctx SkillExecutionContext
 	if exitCode != 0 {
 		status = "failed"
 	}
+	if exitCode == SkillFilesMissingExitCode {
+		stderr = fmt.Sprintf("Skill 文件缺失（exit %d）：容器挂载目录里没有可执行的 skill 文件。"+
+			"通常原因：宿主机 skill 工作目录未准备好，或挂载路径不一致。\n原始 stderr: %s",
+			SkillFilesMissingExitCode, stderr)
+	}
 
 	afterFiles := e.scanFiles(outputsDir)
 	var outputFiles []string
@@ -471,9 +579,19 @@ func (e *DockerSkillExecutor) CleanupMessage(messageID string) error {
 		return nil
 	}
 
+	skillsMessageDir := filepath.Join(e.baseDir, "skills", messageID)
+
+	logger.Info("[skill-exec] CleanupMessage",
+		zap.String("message_id", messageID),
+		zap.String("skills_message_dir_to_remove", skillsMessageDir),
+	)
+
 	// 停止并删除容器池中对应的容器
 	if val, ok := e.containerPool.LoadAndDelete(messageID); ok {
 		cc := val.(*containerContext)
+		logger.Info("[skill-exec] CleanupMessage removing pooled container",
+			zap.String("container_id", cc.containerID),
+		)
 		cli, err := e.getDockerClient()
 		if err == nil {
 			e.stopAndRemoveContainer(context.Background(), cli, cc.containerID)
@@ -481,7 +599,6 @@ func (e *DockerSkillExecutor) CleanupMessage(messageID string) error {
 	}
 
 	// 删除 skills/messageID 目录（outputs 目录保留，供调用方使用产物）
-	skillsMessageDir := filepath.Join(e.baseDir, "skills", messageID)
 	if err := os.RemoveAll(skillsMessageDir); err != nil && !os.IsNotExist(err) {
 		return wrapErr("CleanupMessage.RemoveAll(skillsMessageDir)", err)
 	}

@@ -4,6 +4,7 @@ import (
 	"mooc-manus/internal/applications/dtos"
 	"mooc-manus/internal/domains/models/events"
 	"mooc-manus/internal/domains/services/agents"
+	"mooc-manus/internal/domains/services/tools"
 	"mooc-manus/internal/infra/external/sse"
 	"mooc-manus/pkg/logger"
 	"net/http"
@@ -21,11 +22,28 @@ type BaseAgentApplicationService interface {
 
 type BaseAgentApplicationServiceImpl struct {
 	agentDomainSvc agents.BaseAgentDomainService
+	skillExecutor  tools.SkillExecutor // 用于 SSE 流结束时清理 skill 容器（D7=A）
 }
 
-func NewBaseAgentApplicationService(agentDomainSvc agents.BaseAgentDomainService) BaseAgentApplicationService {
+func NewBaseAgentApplicationService(
+	agentDomainSvc agents.BaseAgentDomainService,
+	skillExecutor tools.SkillExecutor,
+) BaseAgentApplicationService {
 	return &BaseAgentApplicationServiceImpl{
 		agentDomainSvc: agentDomainSvc,
+		skillExecutor:  skillExecutor,
+	}
+}
+
+// cleanupSkillByMessageID 在 SSE 流关闭前清理 skill 容器与工作目录
+// 与 sse.CloseChat 配对，确保容器和消息生命周期对齐
+func (s *BaseAgentApplicationServiceImpl) cleanupSkillByMessageID(messageId string) {
+	if s.skillExecutor == nil || messageId == "" {
+		return
+	}
+	if err := s.skillExecutor.CleanupMessage(messageId); err != nil {
+		logger.Warn("cleanup skill executor failed",
+			zap.Error(err), zap.String("messageId", messageId))
 	}
 }
 
@@ -36,8 +54,10 @@ func (s *BaseAgentApplicationServiceImpl) Chat(clientRequest dtos.ChatClientRequ
 	}
 	request := dtos.ConvertChatClientRequest2Request(clientRequest)
 	messageId := sse.StartChat(writer)
+	request.MessageId = messageId // 注入 messageId 到 domain 层，用于 Skill 容器隔离
 	logger.Info("start new chat", zap.String("messageId", messageId))
 	defer func() {
+		s.cleanupSkillByMessageID(messageId)
 		sse.CloseChat(messageId)
 		logger.Info("close chat", zap.String("messageId", messageId))
 	}()
@@ -61,8 +81,10 @@ func (s *BaseAgentApplicationServiceImpl) CreatePlan(clientRequest dtos.AgentPla
 
 	request := dtos.ConvertPlanCreateClientRequest2DORequest(clientRequest)
 	messageId := sse.StartChat(writer)
+	request.MessageId = messageId // 注入 messageId 到 domain 层，用于 Skill 容器隔离
 	logger.Info("start create plans", zap.String("messageId", messageId))
 	defer func() {
+		s.cleanupSkillByMessageID(messageId)
 		sse.CloseChat(messageId)
 		logger.Info("end create plans", zap.String("messageId", messageId))
 	}()
@@ -102,8 +124,10 @@ func (s *BaseAgentApplicationServiceImpl) UpdatePlan(clientRequest dtos.AgentPla
 
 	request := dtos.ConvertPlanUpdateClientRequest2DORequest(clientRequest)
 	messageId := sse.StartChat(writer)
+	request.MessageId = messageId // 注入 messageId 到 domain 层，用于 Skill 容器隔离
 	logger.Info("start update plans", zap.String("messageId", messageId))
 	defer func() {
+		s.cleanupSkillByMessageID(messageId)
 		sse.CloseChat(messageId)
 		logger.Info("end update plans", zap.String("messageId", messageId))
 	}()
