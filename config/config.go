@@ -41,10 +41,11 @@ type StorageConfig struct {
 }
 
 type SkillConfig struct {
-	BaseDir     string `toml:"base_dir"`      // 容器内基础目录，默认 /data/.beedance
-	HostBaseDir string `toml:"host_base_dir"` // 宿主机基础目录（Docker-in-Docker 场景使用），空值表示非容器化部署，直接使用 BaseDir
-	DockerHost  string `toml:"docker_host"`   // Docker daemon 地址
-	DockerImage string `toml:"docker_image"`  // 默认 Skill 执行镜像
+	BaseDir     string            `toml:"base_dir"`      // 容器内基础目录，默认 /data/.beedance
+	HostBaseDir string            `toml:"host_base_dir"` // 宿主机基础目录（Docker-in-Docker 场景使用），空值表示非容器化部署，直接使用 BaseDir
+	DockerHost  string            `toml:"docker_host"`   // Docker daemon 地址
+	DockerImage string            `toml:"docker_image"`  // 默认 Skill 执行镜像
+	Env         map[string]string `toml:"env"`           // 注入到 Skill 容器的环境变量（静态配置）
 }
 
 type LoggerConfig struct {

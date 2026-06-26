@@ -61,6 +61,7 @@ func InitRouter() *gin.Engine {
 		config.Cfg.Skill.HostBaseDir,
 		config.Cfg.Skill.DockerHost,
 		config.Cfg.Skill.DockerImage,
+		config.Cfg.Skill.Env, // 注入静态环境变量配置
 	)
 
 	// 2.3 Agent 模块 Domain Service（依赖 Skill repo，放在 Skill Domain Service 之后）

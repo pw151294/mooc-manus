@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 
@@ -21,6 +22,7 @@ type DockerSkillExecutor struct {
 	hostBaseDir string
 	dockerHost  string
 	dockerImage string
+	staticEnv   map[string]string // 静态环境变量（从配置注入到所有容器）
 
 	dockerClient *client.Client
 	clientOnce   sync.Once
@@ -46,7 +48,7 @@ const (
 // NewDockerSkillExecutor 创建 Docker 执行器实例
 // baseDir / hostBaseDir 支持相对路径，构造时统一规范为绝对路径
 // 否则 Docker bind mount 会因 Source 非绝对路径被 daemon 拒绝
-func NewDockerSkillExecutor(baseDir, hostBaseDir, dockerHost, dockerImage string) SkillExecutor {
+func NewDockerSkillExecutor(baseDir, hostBaseDir, dockerHost, dockerImage string, staticEnv map[string]string) SkillExecutor {
 	if abs, err := filepath.Abs(baseDir); err == nil {
 		baseDir = abs
 	}
@@ -60,6 +62,7 @@ func NewDockerSkillExecutor(baseDir, hostBaseDir, dockerHost, dockerImage string
 		hostBaseDir: hostBaseDir,
 		dockerHost:  dockerHost,
 		dockerImage: dockerImage,
+		staticEnv:   staticEnv,
 	}
 }
 
@@ -135,6 +138,25 @@ func (e *DockerSkillExecutor) scanFiles(dir string) map[string]bool {
 	return files
 }
 
+// buildEnvList 将 staticEnv 构造为 "KEY=VALUE" 列表（供容器 Env 字段使用）
+// 按 key 字典序排序，确保容器配置稳定（便于排查和容器复用判断）
+func (e *DockerSkillExecutor) buildEnvList() []string {
+	if len(e.staticEnv) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(e.staticEnv))
+	for k := range e.staticEnv {
+		keys = append(keys, k)
+	}
+	// 稳定排序，避免相同 env 产生不同容器 hash
+	sort.Strings(keys)
+	envList := make([]string, 0, len(e.staticEnv))
+	for _, k := range keys {
+		envList = append(envList, fmt.Sprintf("%s=%s", k, e.staticEnv[k]))
+	}
+	return envList
+}
+
 // buildEnhancedScript 拼接容器内执行脚本：cd outputs && ln -sf skills/* && export SKILL_DIR && bash
 func (e *DockerSkillExecutor) buildEnhancedScript(ctx SkillExecutionContext, bashCommand string) string {
 	skillDirName := fmt.Sprintf("%s-%s", ctx.SkillID, ctx.Version)
@@ -179,6 +201,7 @@ func (e *DockerSkillExecutor) createContainer(
 		// 容器保持运行，等待 exec 注入命令
 		Cmd:        []string{"tail", "-f", "/dev/null"},
 		WorkingDir: "/workspace/outputs",
+		Env:        e.buildEnvList(), // 注入静态环境变量
 		Labels: map[string]string{
 			containerLabelKey: containerLabelValue,
 		},
@@ -341,6 +364,7 @@ func (e *DockerSkillExecutor) createPooledContainer(
 		Image:      e.dockerImage,
 		Cmd:        []string{"tail", "-f", "/dev/null"},
 		WorkingDir: "/workspace/outputs",
+		Env:        e.buildEnvList(), // 注入静态环境变量
 		Labels: map[string]string{
 			containerLabelKey: containerLabelValue,
 			"mooc_message_id": ctx.MessageID,
