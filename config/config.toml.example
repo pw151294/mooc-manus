@@ -1,0 +1,49 @@
+# mooc-manus 配置文件模板
+# 复制本文件为 config.toml 并根据实际部署环境修改
+
+[redis]
+addr = "127.0.0.1:6379"
+username = ""
+password = ""
+db = 0
+pool_size = 30
+min_idle_conns = 10
+
+[database]
+user = "postgres"
+password = "your-password-here"
+database = "manus"
+host = "127.0.0.1"
+port = 5432
+sslmode = "disable"
+
+[logger]
+level = "info"
+format = "console" # "json" or "console"
+output = "both" # "stdout", "file", or "both"
+log_dir = "./logs"
+log_file = "manus.log"
+max_size = 50 # megabytes
+max_backups = 10
+max_age = 7 # days
+compress = false
+enable_caller = true
+caller_skip = 1
+
+[storage]
+root_dir = "./data" # FileStorage 根目录
+
+[skill]
+base_dir = "./data/skill-runtime"
+host_base_dir = ""
+docker_host = "unix:///var/run/docker.sock"
+docker_image = "python:3.11-slim"
+
+# Skill 容器环境变量注入配置
+# 这些环境变量会被注入到所有 Skill 执行容器中，供 Python 脚本通过 os.environ 读取
+# 敏感凭据（如 token）建议通过进程环境变量覆盖，而非硬编码到配置文件
+# 启动时可 export SRE_TOKEN=xxx 来覆盖下方配置值（进程 env 优先级更高）
+[skill.env]
+SRE_MCP_SERVER_URL = "http://10.103.139.161:9605"
+SRE_WORKSPACE_ID = "17"
+SRE_TOKEN = "PLACEHOLDER_TOKEN_HERE"  # 生产环境请通过 export SRE_TOKEN=真实token 覆盖

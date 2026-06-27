@@ -11,12 +11,37 @@ import (
 	"mooc-manus/internal/infra/external/file_storage"
 	"mooc-manus/internal/infra/external/health_checker"
 	"mooc-manus/internal/infra/repositories"
+	"net/http"
 
 	"github.com/gin-gonic/gin"
 )
 
+// corsMiddleware 处理跨域请求，含 OPTIONS 预检
+// 浏览器对 Content-Type: application/json 等非简单请求会先发 OPTIONS 预检，
+// 未放行时 Gin 会回 404，导致前端 GET/POST 实际未发出
+func corsMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		origin := c.GetHeader("Origin")
+		if origin != "" {
+			c.Header("Access-Control-Allow-Origin", origin)
+			c.Header("Access-Control-Allow-Credentials", "true")
+		}
+		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS")
+		c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept, Origin, X-Requested-With")
+		c.Header("Access-Control-Max-Age", "86400")
+
+		if c.Request.Method == http.MethodOptions {
+			c.AbortWithStatus(http.StatusNoContent)
+			return
+		}
+
+		c.Next()
+	}
+}
+
 func InitRouter() *gin.Engine {
 	r := gin.Default()
+	r.Use(corsMiddleware())
 
 	// ============================================================
 	// 第一层：Repository 层（按依赖拓扑顺序初始化）

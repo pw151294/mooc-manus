@@ -28,3 +28,9 @@ Thumbs.db
 
 # Local storage data (skill files, uploads, etc.)
 data/
+
+# Runtime logs
+logs/
+
+# Local skill tool state
+.superpowers/
