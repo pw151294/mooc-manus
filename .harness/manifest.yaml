@@ -13,6 +13,7 @@ cognition:
     - rules/44-tool-registration.md
     - rules/45-event-emission.md
     - rules/46-prompt-management.md
+    - rules/47-memory-boundaries.md
   playbooksIndex: playbooks/INDEX.md
   knowledgeIndex: knowledge/README.md
 
