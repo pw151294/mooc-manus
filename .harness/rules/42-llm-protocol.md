@@ -1,5 +1,5 @@
 ---
-rule_id: R-42-llm-protocol
+rule_id: R-42-llm
 severity: high
 ---
 
@@ -38,6 +38,7 @@ LLM 调用必须通过 `internal/domains/models/llm/` 下的 `Message` / `Tool` 
    - 各厂商实现位于 `internal/infra/external/llm/`（如 `openai_invoker.go` / `anthropic_invoker.go`）
    - 每个 Adapter 实现 `invoker.Invoker` 接口，做 `llm.Message ↔ SDK type` 的双向转换
    - DI 在 `api/routers/route.go::InitRouter` 装配，按模型 ID 路由到对应 Invoker
+   - **adapter 层例外**：adapter 文件位于 `internal/infra/external/llm/`，可 import LLM SDK；静态检查的 deny-list 仅作用于 `internal/domains/`。
 
 3. **正例**
    ```go

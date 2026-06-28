@@ -15,7 +15,7 @@ severity: medium
    - 禁止 `panic(err)` 入仓（除 `init()` 阶段的不可恢复错误）
 
 2. **禁止用 `fmt.Println` / `log.Printf` 入仓**
-   - 调试日志走项目统一 zap logger（见 `internal/infra/logger/`），不得遗留 `fmt.Println`、`println`、标准库 `log` 包调用
+   - 调试日志走项目统一 zap logger（见 `pkg/logger/`），不得遗留 `fmt.Println`、`println`、标准库 `log` 包调用
 
 3. **禁止违反命名约定**
    - 包名禁止驼峰或下划线（如 `appConfig` / `app_config`）；统一小写无分隔（`appconfig` / `agents`）
@@ -39,7 +39,7 @@ severity: medium
    - Handler 层通过 `errors.Is` 映射 HTTP 状态码（参考 `api/handlers/skill.go::writeError`）
 
 2. **日志使用项目 zap logger**
-   - 统一 logger 入口（参见 `internal/infra/logger/`）
+   - 统一 logger 入口（参见 `pkg/logger/`）
    - 错误日志带上下文字段：`logger.Error("import skill failed", zap.String("skillId", id), zap.Error(err))`
 
 3. **命名（汇总，详见 `.harness/archive/cursorrules-pre-harness-v1`）**

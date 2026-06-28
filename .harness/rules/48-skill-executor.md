@@ -1,5 +1,5 @@
 ---
-rule_id: R-48-skill-executor
+rule_id: R-48-skill
 severity: critical
 ---
 

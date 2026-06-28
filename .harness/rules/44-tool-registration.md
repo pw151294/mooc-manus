@@ -1,5 +1,5 @@
 ---
-rule_id: R-44-tool-registration
+rule_id: R-44-tool
 severity: medium
 ---
 
