@@ -186,7 +186,11 @@ type Invoker interface {
 }
 ```
 
-说明：流式接口的 `eventCh` 由调用方创建并管理 close；适配器只负责写入并在结束时 close。
+**channel 生命周期约定（与现有 `OpenAiLLM.StreamingInvoke` 一致）**：
+
+- `eventCh` 由调用方（BaseAgent）创建并传入。
+- 适配器负责在流式接收过程中向 `eventCh` 写入事件，并在流结束（或出错上报后）调用 `close(eventCh)`。
+- Anthropic 骨架实现因为无任何事件可写，可直接调用 `close(eventCh)` 后返回零值；这与"适配器负责 close"的总约定一致。
 
 ### 4.5 OpenAI 适配器
 
@@ -247,7 +251,7 @@ func (a *AnthropicAdapter) StreamingInvoke(messages []llm.Message, tools []llm.T
 
 - 结构体、构造函数、方法签名齐全，可被 `createBaseAgent` 引用。
 - `Invoke` 返回 `errors.New("anthropic adapter not implemented")`。
-- `StreamingInvoke` 直接 `close(eventCh)` 后返回零值，保证调用方不会阻塞。
+- `StreamingInvoke` 按 4.4 节 channel 生命周期约定 close 通道后返回零值（骨架阶段无任何事件可写）。
 
 ### 4.7 ChatMemory 重构
 
@@ -265,7 +269,9 @@ func (c *ChatMemory) Compact() { ... }
 ```
 
 - 角色判断从 `*message.GetRole() == "assistant"` 改为 `message.Role == llm.RoleAssistant`。
-- `Compact` 的判断条件改为遍历 `llm.RoleTool` 类型消息，借助 `toolCallId2Name` 查名字。
+- `Compact` 的判断条件改为 `message.Role == llm.RoleTool`，借助 `toolCallId2Name` 查名字。
+
+**附带 Bug 修复**：现有 `Compact` 判断的字符串是 `"tools"`（复数），而 OpenAI 协议里 tool 消息的 role 实际是 `"tool"`（单数），导致循环体永远不会执行、压缩逻辑形同虚设。重构后统一使用 `llm.RoleTool`（= `"tool"`），该判断将真正生效。属于行为变更，已在改动清单中标注。
 
 ### 4.8 Tool 接口重构
 
@@ -302,6 +308,17 @@ func OnToolCallStart(toolCall llm.ToolCall, toolName string) AgentEvent { ... }
 func OnToolCallComplete(toolCall llm.ToolCall, toolName string, result *models.ToolCallResult) AgentEvent { ... }
 func OnToolCallFail(toolCall llm.ToolCall, toolName string, result *models.ToolCallResult) AgentEvent { ... }
 ```
+
+字段映射（从 `llm.ToolCall` 到 `ToolEvent`）：
+
+| ToolEvent 字段 | 取值来源 |
+|---------------|---------|
+| `ToolCallID` | `toolCall.ID` |
+| `FunctionName` | `toolCall.Name`（对应原 OpenAI 的 `Function.Name`） |
+| `FunctionArgs` | `toolCall.Arguments`（对应原 OpenAI 的 `Function.Arguments`） |
+| `ToolName` | 由调用方传入的 `toolName` 参数 |
+
+说明：`llm.ToolCall` 已经把 OpenAI 嵌套的 `Function.Name / Function.Arguments` 扁平化为 `Name / Arguments`，转换函数直接平铺访问即可，无需额外二级解包。
 
 ### 4.10 BaseAgent 重构
 
@@ -360,7 +377,11 @@ default: // "openai" 或空值
 }
 ```
 
-`PO ↔ DO` 转换函数同步带上 `Provider` 字段；持久化模型 `AppConfigPO` 增加对应列（迁移脚本本次不涉及，新字段允许为空，默认按 OpenAI 处理）。
+**持久化层处理范围（明确边界）**：
+
+- 本次会修改 `internal/infra/models/app_config.go` 的 `AppConfigPO` 结构体，新增 `Provider string` 字段（GORM 标签：`gorm:"type:varchar(32);not null;default:'openai'"`）；同步更新 `ConvertAppConfigDO2PO` / `ConvertAppConfigPO2DO` 两个转换函数。
+- 数据库迁移脚本（如 SQL 文件、GORM AutoMigrate 调用调整等）**不在本次范围**：依赖项目现有的 schema 演进机制（若启用了 GORM AutoMigrate，新字段会在应用启动时自动加列）。
+- 历史数据中 `Provider` 为空字符串时，`createBaseAgent` 的 `default` 分支会回退到 OpenAI 适配器，保证向后兼容。
 
 ---
 
@@ -374,7 +395,7 @@ default: // "openai" 或空值
 | `internal/infra/external/llm/openai_adapter.go` | 新增 | OpenAI 完整实现 + 双向转换 |
 | `internal/infra/external/llm/anthropic_adapter.go` | 新增 | Anthropic 接口骨架 |
 | `internal/infra/external/llm/openai.go` | 保留 | 作为 OpenAI Adapter 的底层 SDK 封装 |
-| `internal/domains/models/memory/memory.go` | 重构 | 内部存储改为 `[]llm.Message` |
+| `internal/domains/models/memory/memory.go` | 重构 | 内部存储改为 `[]llm.Message`；`Compact` 角色判断字符串从 `"tools"` 修正为 `llm.RoleTool`（行为变更：原压缩逻辑因字符串拼写错误从未生效，重构后真正生效） |
 | `internal/domains/models/memory/manager.go` | 重构 | 同步替换类型 |
 | `internal/domains/services/agents/base.go` | 重构 | 所有方法签名改为 `llm.*` |
 | `internal/domains/services/tools/base.go` | 重构 | `Tool.GetTools()` 返回 `[]llm.Tool` |
@@ -387,13 +408,13 @@ default: // "openai" 或空值
 | `internal/domains/services/flows/plan_react.go` | 适配 | 改为构造 `llm.Invoker` 注入 BaseAgent |
 | `internal/domains/services/agents/agent.go` | 适配 | `createBaseAgent` 按 Provider 选择适配器 |
 | `internal/domains/models/app_config.go` | 扩展 | `ModelConfig.Provider`、PO/DO 转换函数同步 |
-| `internal/infra/models/app_config.go`（如存在 PO） | 扩展 | 新增 Provider 列 |
+| `internal/infra/models/app_config.go` | 扩展 | 结构体新增 `Provider string` GORM 字段（默认 `'openai'`）；数据库迁移依赖现有 schema 演进机制，本次不写独立迁移脚本 |
 
 ---
 
 ## 6. 实施顺序
 
-按依赖拓扑分阶段执行，每个阶段结束 `go build ./...` 应可通过：
+按依赖拓扑分阶段执行：
 
 1. **新建领域抽象层**：`llm.Message` / `Tool` / `ToolCall` / `Invoker`。
 2. **新建 OpenAI 适配器**：实现 `llm.Invoker`，封装双向转换函数。
@@ -405,13 +426,21 @@ default: // "openai" 或空值
 8. **适配上层**：`PlanAgent` / `ReActAgent` / `PlanReActFlow` / `agent.go` 编译修复。
 9. **配置扩展**：`ModelConfig.Provider` + `createBaseAgent` Provider 分支。
 
+**关键依赖关系**：BaseAgent 的方法签名依赖 `llm.Message` 与重构后的 Memory / Tool / Events 类型，因此阶段 7（BaseAgent）必须在阶段 4-6 全部完成之后执行，不能并行。
+
+**编译校验节奏**：
+
+- 阶段 1-3 新增独立包/文件，未触碰现有依赖，`go build ./internal/domains/models/llm/... ./internal/infra/external/llm/...` 可单独通过；但 `go build ./...` 在阶段 4-7 过程中可能因混合类型暂时无法通过。
+- 阶段 8 完成后 `go build ./...` 必须全量通过。
+- 阶段 9 完成后再次确认 `go build ./...` 通过并跑一遍现有回归。
+
 ---
 
 ## 7. 错误处理
 
 - 适配器内部转换失败应通过 `error` 返回，不 panic。
 - `Anthropic.Invoke` 返回 `errors.New("anthropic adapter not implemented")`，调用方按现有重试 / 失败上报路径处理。
-- `Anthropic.StreamingInvoke` 在写 `eventCh` 前先 `close(eventCh)`，避免调用方阻塞。
+- `Anthropic.StreamingInvoke` 因为不产生任何事件，按 4.4 节 channel 生命周期约定，直接 `close(eventCh)` 后返回零值，避免调用方阻塞。
 - `Extra` 字段缺失或类型不匹配时，适配器按"忽略+日志告警"处理，不影响主流程。
 
 ---
@@ -451,7 +480,7 @@ default: // "openai" 或空值
 - 多模态、thinking blocks、prompt caching 等厂商特性落地。
 - A2A 工具按厂商协议双轨支持。
 - Provider 配置在 API 层 / 前端层的暴露与切换。
-- 持久化层 `AppConfigPO` 表结构迁移脚本。
+- 独立的 `AppConfigPO` 数据库迁移脚本（本次依赖现有 schema 演进机制；结构体改动本身在范围内，详见 4.11 节）。
 
 ---
 
