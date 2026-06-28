@@ -8,6 +8,7 @@ cognition:
   loadOrder:
     - rules/40-ddd-layering.md
     - rules/41-go-conventions.md
+    - rules/42-llm-protocol.md
   playbooksIndex: playbooks/INDEX.md
   knowledgeIndex: knowledge/README.md
 
