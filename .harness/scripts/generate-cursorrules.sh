@@ -2,6 +2,8 @@
 # 从 rules/ 拼装 .cursorrules
 set -euo pipefail
 
+command -v yq >/dev/null 2>&1 || { echo "❌ 需要 yq (mikefarah/yq v4+)。安装：brew install yq / apt install yq"; exit 2; }
+
 HARNESS_ROOT="${HARNESS_ROOT:-.harness}"
 OUTPUT="${OUTPUT:-.cursorrules}"
 

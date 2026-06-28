@@ -3,6 +3,8 @@
 # 退出码：0 通过，非 0 失败
 set -euo pipefail
 
+command -v yq >/dev/null 2>&1 || { echo "❌ 需要 yq (mikefarah/yq v4+)。安装：brew install yq / apt install yq"; exit 2; }
+
 HARNESS_ROOT="${HARNESS_ROOT:-.harness}"
 fail=0
 
@@ -17,10 +19,10 @@ for d in rules knowledge playbooks specs plans retro agents hooks scripts; do
 done
 
 # 3. manifest loadOrder 中每个 rules 文件存在
-yq e '.cognition.loadOrder[]' "$HARNESS_ROOT/manifest.yaml" 2>/dev/null | while read -r f; do
+while read -r f; do
   [ -z "$f" ] && continue
-  [ -f "$HARNESS_ROOT/$f" ] || { echo "❌ loadOrder references missing $f"; exit 1; }
-done
+  [ -f "$HARNESS_ROOT/$f" ] || { echo "❌ loadOrder references missing $f"; fail=1; }
+done < <(yq e '.cognition.loadOrder[]' "$HARNESS_ROOT/manifest.yaml" 2>/dev/null)
 
 # 4. rules 文件命名 NN-kebab-case
 for f in "$HARNESS_ROOT/rules"/*.md; do
