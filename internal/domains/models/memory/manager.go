@@ -3,7 +3,7 @@ package memory
 import (
 	"sync"
 
-	"github.com/openai/openai-go"
+	"mooc-manus/internal/domains/models/llm"
 )
 
 var manager *memoryManager
@@ -31,7 +31,7 @@ func DeleteMemory(conversationId string) {
 	defer manager.Unlock()
 
 	if memory, ok := manager.conversationId2Memory[conversationId]; ok {
-		memory.messages = make([]openai.ChatCompletionMessageParamUnion, 0, 0)
+		memory.messages = make([]llm.Message, 0)
 		memory.toolCallId2Name = make(map[string]string)
 		delete(manager.conversationId2Memory, conversationId)
 	}
