@@ -10,6 +10,7 @@ cognition:
     - rules/41-go-conventions.md
     - rules/42-llm-protocol.md
     - rules/43-agent-composition.md
+    - rules/44-tool-registration.md
   playbooksIndex: playbooks/INDEX.md
   knowledgeIndex: knowledge/README.md
 
