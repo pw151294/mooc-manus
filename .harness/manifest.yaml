@@ -5,7 +5,8 @@ inherits:
     version: "1.0"
 
 cognition:
-  loadOrder: []
+  loadOrder:
+    - rules/40-ddd-layering.md
   playbooksIndex: playbooks/INDEX.md
   knowledgeIndex: knowledge/README.md
 
