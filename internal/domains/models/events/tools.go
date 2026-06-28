@@ -1,43 +1,45 @@
 package events
 
 import (
-	"mooc-manus/internal/domains/models"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/openai/openai-go"
+
+	"mooc-manus/internal/domains/models"
+	"mooc-manus/internal/domains/models/llm"
 )
 
-func convert2ToolEvent(toolCall openai.ChatCompletionMessageToolCall, toolName string) ToolEvent {
-	toolEvent := ToolEvent{}
-	toolEvent.ID = uuid.New().String()
-	toolEvent.CreatedAt = time.Now()
-	toolEvent.Timestamp = time.Now()
-	toolEvent.ToolCallID = toolCall.ID
-	toolEvent.ToolName = toolName
-	toolEvent.FunctionName = toolCall.Function.Name
-	toolEvent.FunctionArgs = toolCall.Function.Arguments
-
-	return toolEvent
+func convert2ToolEvent(toolCall llm.ToolCall, toolName string) ToolEvent {
+	ev := ToolEvent{}
+	ev.ID = uuid.New().String()
+	ev.CreatedAt = time.Now()
+	ev.Timestamp = time.Now()
+	ev.ToolCallID = toolCall.ID
+	ev.ToolName = toolName
+	ev.FunctionName = toolCall.Name
+	ev.FunctionArgs = toolCall.Arguments
+	return ev
 }
 
-func OnToolCallStart(toolCall openai.ChatCompletionMessageToolCall, toolName string) AgentEvent {
-	toolEvent := convert2ToolEvent(toolCall, toolName)
-	toolEvent.Type = EventTypeToolCallStart
-	toolEvent.Status = ToolEventStatusCalling
-	return &toolEvent
+func OnToolCallStart(toolCall llm.ToolCall, toolName string) AgentEvent {
+	ev := convert2ToolEvent(toolCall, toolName)
+	ev.Type = EventTypeToolCallStart
+	ev.Status = ToolEventStatusCalling
+	return &ev
 }
-func OnToolCallComplete(toolCall openai.ChatCompletionMessageToolCall, toolName string, result *models.ToolCallResult) AgentEvent {
-	toolEvent := convert2ToolEvent(toolCall, toolName)
-	toolEvent.Type = EventTypeToolCallComplete
-	toolEvent.Status = ToolEventStatusCompleted
-	toolEvent.FunctionResult = result
-	return &toolEvent
+
+func OnToolCallComplete(toolCall llm.ToolCall, toolName string, result *models.ToolCallResult) AgentEvent {
+	ev := convert2ToolEvent(toolCall, toolName)
+	ev.Type = EventTypeToolCallComplete
+	ev.Status = ToolEventStatusCompleted
+	ev.FunctionResult = result
+	return &ev
 }
-func OnToolCallFail(toolCall openai.ChatCompletionMessageToolCall, toolName string, result *models.ToolCallResult) AgentEvent {
-	toolEvent := convert2ToolEvent(toolCall, toolName)
-	toolEvent.Type = EventTypeToolCallFail
-	toolEvent.Status = ToolEventStatusFailed
-	toolEvent.FunctionResult = result
-	return &toolEvent
+
+func OnToolCallFail(toolCall llm.ToolCall, toolName string, result *models.ToolCallResult) AgentEvent {
+	ev := convert2ToolEvent(toolCall, toolName)
+	ev.Type = EventTypeToolCallFail
+	ev.Status = ToolEventStatusFailed
+	ev.FunctionResult = result
+	return &ev
 }
