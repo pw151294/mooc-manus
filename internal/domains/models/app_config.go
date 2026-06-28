@@ -5,6 +5,7 @@ import (
 )
 
 type ModelConfig struct {
+	Provider    string
 	BaseUrl     string
 	ApiKey      string
 	ModelName   string
@@ -35,6 +36,7 @@ type AppConfigDO struct {
 func ConvertAppConfigDO2PO(appConfigDO AppConfigDO) models.AppConfigPO {
 	return models.AppConfigPO{
 		ID:               appConfigDO.AppConfigID,
+		Provider:         appConfigDO.ModelConfig.Provider,
 		BaseUrl:          appConfigDO.ModelConfig.BaseUrl,
 		ApiKey:           appConfigDO.ModelConfig.ApiKey,
 		ModelName:        appConfigDO.ModelConfig.ModelName,
@@ -50,6 +52,7 @@ func ConvertAppConfigPO2DO(appConfigPO models.AppConfigPO) AppConfigDO {
 	return AppConfigDO{
 		AppConfigID: appConfigPO.ID,
 		ModelConfig: ModelConfig{
+			Provider:    appConfigPO.Provider,
 			BaseUrl:     appConfigPO.BaseUrl,
 			ApiKey:      appConfigPO.ApiKey,
 			ModelName:   appConfigPO.ModelName,

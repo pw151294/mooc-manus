@@ -4,6 +4,7 @@ import "time"
 
 type AppConfigPO struct {
 	ID               string    `gorm:"type:varchar(36);primary_key" json:"id"`
+	Provider         string    `gorm:"type:varchar(32);not null;default:'openai'" json:"provider"`
 	BaseUrl          string    `gorm:"type:varchar(255);not null" json:"baseUrl"`
 	ApiKey           string    `gorm:"type:varchar(255);not null" json:"apiKey"`
 	ModelName        string    `gorm:"type:varchar(100);not null" json:"modelName"`
