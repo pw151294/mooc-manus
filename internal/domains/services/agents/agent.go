@@ -2,14 +2,16 @@ package agents
 
 import (
 	"fmt"
+	"mooc-manus/internal/domains/models"
 	"mooc-manus/internal/domains/models/agents"
 	"mooc-manus/internal/domains/models/events"
+	"mooc-manus/internal/domains/models/invoker"
 	"mooc-manus/internal/domains/models/memory"
 	"mooc-manus/internal/domains/models/prompts/plans"
 	"mooc-manus/internal/domains/services"
 	"mooc-manus/internal/domains/services/tools"
 	"mooc-manus/internal/infra/external/file_storage"
-	"mooc-manus/internal/infra/external/llm"
+	llmadapter "mooc-manus/internal/infra/external/llm"
 	"mooc-manus/internal/infra/repositories"
 	"mooc-manus/pkg/logger"
 	"strings"
@@ -158,13 +160,26 @@ func (s *BaseAgentDomainServiceImpl) UpdatePlan(request agents.AgentPlanUpdateRe
 	close(eventCh)
 }
 
+// PickInvoker 根据 ModelConfig.Provider 选择对应的 LLM 适配器
+// 空字符串或未知 provider 回退到 OpenAI 适配器。
+func PickInvoker(cfg models.ModelConfig) invoker.Invoker {
+	switch cfg.Provider {
+	case "anthropic":
+		return llmadapter.NewAnthropicAdapter(cfg)
+	default:
+		return llmadapter.NewOpenAIAdapter(cfg)
+	}
+}
+
 func (s *BaseAgentDomainServiceImpl) createBaseAgent(request agents.ChatRequest) (*BaseAgent, error) {
 	appConfig, err := s.appConfigDomainSvc.GetById(request.AppConfigId)
 	if err != nil {
 		return nil, err
 	}
 	logger.Info("get app config", zap.Any("model config", appConfig.ModelConfig), zap.Any("agent config", appConfig.AgentConfig))
-	openAiLLM := llm.NewOpenAiLLM(appConfig.ModelConfig)
+
+	inv := PickInvoker(appConfig.ModelConfig)
+
 	chatMemory := memory.FetchMemory(request.ConversationId)
 
 	// 初始化工具tools
@@ -216,7 +231,7 @@ func (s *BaseAgentDomainServiceImpl) createBaseAgent(request agents.ChatRequest)
 		}
 	}
 
-	return NewBaseAgent(appConfig.AgentConfig, openAiLLM, chatMemory, baseTools, systemPrompt), nil
+	return NewBaseAgent(appConfig.AgentConfig, inv, chatMemory, baseTools, systemPrompt), nil
 }
 
 // skillUsageRules Skill 使用规则常量（对齐 Beedance BaseAgent.java:163-179）

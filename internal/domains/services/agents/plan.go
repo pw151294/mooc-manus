@@ -27,7 +27,7 @@ type PlanAgent struct {
 func NewPlanAgent(baseAgent *BaseAgent) *PlanAgent {
 	agent := &PlanAgent{}
 	agent.agentConfig = baseAgent.agentConfig
-	agent.llm = baseAgent.llm
+	agent.invoker = baseAgent.invoker
 	agent.memory = baseAgent.memory
 	agent.tools = baseAgent.tools
 	agent.retryInterval = 5

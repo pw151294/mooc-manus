@@ -5,10 +5,10 @@ import (
 	"mooc-manus/internal/domains/models"
 	agent "mooc-manus/internal/domains/models/agents"
 	"mooc-manus/internal/domains/models/events"
+	"mooc-manus/internal/domains/models/invoker"
 	"mooc-manus/internal/domains/models/memory"
 	"mooc-manus/internal/domains/services/agents"
 	"mooc-manus/internal/domains/services/tools"
-	"mooc-manus/internal/infra/external/llm"
 	"mooc-manus/pkg/logger"
 	"sync"
 
@@ -24,14 +24,14 @@ type PlanReActFlow struct {
 	executor      *agents.ReActAgent
 }
 
-func NewPlanReActFlow(agentConfig models.AgentConfig, llm *llm.OpenAiLLM, sessionId string, tools []tools.Tool) BaseFlow {
+func NewPlanReActFlow(agentConfig models.AgentConfig, inv invoker.Invoker, sessionId string, tools []tools.Tool) BaseFlow {
 	flow := &PlanReActFlow{}
 	flow.sessionId = sessionId
 	flow.status = FlowStatusIdle
 	flow.sessionStatus = SessionStatusPending
-	plannerBaseAgent := agents.NewBaseAgent(agentConfig, llm, memory.FetchMemory("planner::"+sessionId), tools, "")
+	plannerBaseAgent := agents.NewBaseAgent(agentConfig, inv, memory.FetchMemory("planner::"+sessionId), tools, "")
 	flow.planner = agents.NewPlanAgent(plannerBaseAgent)
-	reActBaseAgent := agents.NewBaseAgent(agentConfig, llm, memory.FetchMemory("react::"+sessionId), tools, "")
+	reActBaseAgent := agents.NewBaseAgent(agentConfig, inv, memory.FetchMemory("react::"+sessionId), tools, "")
 	flow.executor = agents.NewReActAgent(reActBaseAgent)
 
 	return flow

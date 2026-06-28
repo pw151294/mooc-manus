@@ -10,7 +10,6 @@ import (
 	"mooc-manus/internal/domains/models/prompts"
 	"mooc-manus/internal/domains/services"
 	"mooc-manus/internal/domains/services/tools"
-	"mooc-manus/internal/infra/external/llm"
 	"mooc-manus/pkg/logger"
 	"net"
 	"net/http"
@@ -117,10 +116,10 @@ func (s *A2ADomainServiceImpl) createA2AExecutor(conversationId string, appConfi
 	}
 
 	// 初始化baseAgent
-	openAiLLM := llm.NewOpenAiLLM(appConfig.ModelConfig)
+	inv := PickInvoker(appConfig.ModelConfig)
 	agentConversationId := fmt.Sprintf("%s::%s", srvCfg.ID, conversationId)
 	chatMemory := memory.FetchMemory(agentConversationId)
-	baseAgent := NewBaseAgent(appConfig.AgentConfig, openAiLLM, chatMemory, baseTools, "")
+	baseAgent := NewBaseAgent(appConfig.AgentConfig, inv, chatMemory, baseTools, "")
 	return &A2AExecutor{
 		agentCard: agents.ConvertA2AServerConfig2AgentCard(srvCfg),
 		agent:     baseAgent,

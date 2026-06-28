@@ -20,7 +20,7 @@ type ReActAgent struct {
 func NewReActAgent(baseAgent *BaseAgent) *ReActAgent {
 	agent := &ReActAgent{}
 	agent.agentConfig = baseAgent.agentConfig
-	agent.llm = baseAgent.llm
+	agent.invoker = baseAgent.invoker
 	agent.memory = baseAgent.memory
 	agent.tools = baseAgent.tools
 	agent.retryInterval = 5

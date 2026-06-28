@@ -4,8 +4,8 @@ import (
 	"mooc-manus/internal/domains/models/agents"
 	"mooc-manus/internal/domains/models/events"
 	"mooc-manus/internal/domains/services"
+	agentsvc "mooc-manus/internal/domains/services/agents"
 	"mooc-manus/internal/domains/services/tools"
-	"mooc-manus/internal/infra/external/llm"
 	"mooc-manus/pkg/logger"
 	"sync"
 
@@ -61,7 +61,8 @@ func (s *BaseFlowDomainServiceImpl) createBaseFlow(request agents.ChatRequest) (
 		return nil, err
 	}
 	logger.Info("get app config", zap.Any("model config", appConfig.ModelConfig), zap.Any("agent config", appConfig.AgentConfig))
-	llm := llm.NewOpenAiLLM(appConfig.ModelConfig)
+
+	inv := agentsvc.PickInvoker(appConfig.ModelConfig)
 
 	// 初始化工具tools
 	providers, err := s.providerDomainSvc.GetByFunctionAndProviderIds(request.FunctionIds, request.ProviderIds)
@@ -82,5 +83,5 @@ func (s *BaseFlowDomainServiceImpl) createBaseFlow(request agents.ChatRequest) (
 	}
 	logger.Info("init tools success")
 
-	return NewPlanReActFlow(appConfig.AgentConfig, llm, request.ConversationId, baseTools), nil
+	return NewPlanReActFlow(appConfig.AgentConfig, inv, request.ConversationId, baseTools), nil
 }
