@@ -1,0 +1,36 @@
+harness_version: "1.0"
+repo: mooc-manus
+inherits:
+  - path: ../../.harness          # 从 mooc-manus/.harness/ 出发，../.. 是 mooc-manus-all/，再进 .harness/
+    version: "1.0"
+
+cognition:
+  loadOrder: []
+  playbooksIndex: playbooks/INDEX.md
+  knowledgeIndex: knowledge/README.md
+
+bridges:
+  - file: ../CLAUDE.md
+    tool: claude-code
+  - file: ../AGENTS.md
+    tool: agents-md-standard
+  - file: ../.cursorrules
+    tool: cursor-legacy
+    generated: true
+
+execution:
+  agents:
+    index: agents/README.md
+    items: []
+  hooks:
+    installer: scripts/bootstrap.sh
+    enabled:
+      - pre-commit
+      - commit-msg
+      - pre-push
+      - post-checkout
+    strictness: warning
+  scripts:
+    validator: scripts/validate-harness.sh
+    cursorrulesGenerator: scripts/generate-cursorrules.sh
+    bridgesSync: scripts/sync-bridges.sh
