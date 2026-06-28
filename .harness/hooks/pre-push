@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# 推送前检查（warning）
+HARNESS_ROOT="${HARNESS_ROOT:-.harness}"
+
+# 1. 目标分支是 master/main 时提示
+while read local_ref local_sha remote_ref remote_sha; do
+  if [[ "$remote_ref" == *master || "$remote_ref" == *main ]]; then
+    echo "[harness] ⚠️ 正在推送到 $remote_ref，违反 R-30-deploy（应走 PR）"
+  fi
+done
+
+# 2. 子模块指针变动 commit message 是否含"升级"
+# 用 @{upstream} 等价于 @{push}，且若 upstream 缺失静默跳过
+range="@{upstream}..HEAD"
+if git rev-parse "$range" >/dev/null 2>&1; then
+  git log "$range" --pretty=format:"%H %s" | while read sha subject; do
+    [ -z "$sha" ] && continue
+    if git show --pretty="" --name-only "$sha" | grep -q "^mooc-manus" && \
+       ! echo "$subject" | grep -qE "(升级|upgrade|bump)"; then
+      echo "[harness] ⚠️ commit $sha 修改子模块指针但 message 未含'升级' (R-10)"
+    fi
+  done
+fi
+
+exit 0

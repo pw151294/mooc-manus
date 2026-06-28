@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# 切分支时刷新桥接层
+HARNESS_ROOT="${HARNESS_ROOT:-.harness}"
+prev_ref="$1"
+new_ref="$2"
+flag="$3"
+[ "$flag" = "1" ] || exit 0   # 仅在分支切换时跑
+
+"$HARNESS_ROOT/scripts/sync-bridges.sh" 2>&1 | sed 's/^/[harness] /' || true
+exit 0

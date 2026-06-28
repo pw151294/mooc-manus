@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# 检查 conventional commits 格式（warning）
+msg_file="$1"
+first_line=$(head -1 "$msg_file")
+# scope 允许字母数字、下划线、连字符、空格、& 与 .（兼容历史 commit "chore: 升级子模块指针(mooc-manus & mooc-manus-web)"）
+if ! [[ "$first_line" =~ ^(feat|fix|chore|docs|test|refactor|style|perf|build|ci)(\([A-Za-z0-9_.\&\ -]+\))?:\ .+ ]]; then
+  echo "[harness] ⚠️ commit message 不符合 conventional commits 格式"
+  echo "[harness]   建议格式：feat(scope): 描述 / chore: 升级子模块指针(name)"
+fi
+exit 0
