@@ -9,6 +9,7 @@ cognition:
     - rules/40-ddd-layering.md
     - rules/41-go-conventions.md
     - rules/42-llm-protocol.md
+    - rules/43-agent-composition.md
   playbooksIndex: playbooks/INDEX.md
   knowledgeIndex: knowledge/README.md
 
