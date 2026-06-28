@@ -3,23 +3,19 @@ package tools
 import (
 	"context"
 	"mooc-manus/internal/domains/models"
+	"mooc-manus/internal/domains/models/llm"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/openai/openai-go"
 )
 
-func convertDO2Tool(do models.ToolFunctionDO) openai.ChatCompletionToolParam {
-	function := openai.FunctionDefinitionParam{}
-	function.Name = do.FunctionName
-	function.Description = openai.String(do.FunctionDesc)
-	function.Parameters = do.Schema.Parameters
-
-	return openai.ChatCompletionToolParam{
-		Function: function,
-		Type:     "function",
+func convertDO2Tool(do models.ToolFunctionDO) llm.Tool {
+	return llm.Tool{
+		Name:        do.FunctionName,
+		Description: do.FunctionDesc,
+		Parameters:  do.Schema.Parameters,
 	}
 }
 

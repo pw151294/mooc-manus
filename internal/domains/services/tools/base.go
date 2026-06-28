@@ -2,12 +2,11 @@ package tools
 
 import (
 	"mooc-manus/internal/domains/models"
-
-	"github.com/openai/openai-go"
+	"mooc-manus/internal/domains/models/llm"
 )
 
 type Tool interface {
-	GetTools() []openai.ChatCompletionToolParam
+	GetTools() []llm.Tool
 	HasTool(funcName string) bool
 	Invoke(funcName, funcArgs string) models.ToolCallResult
 	Init() error
@@ -51,11 +50,10 @@ type BaseTool struct {
 	functions    []models.ToolFunctionDO
 }
 
-func (t *BaseTool) GetTools() []openai.ChatCompletionToolParam {
-	params := make([]openai.ChatCompletionToolParam, 0, len(t.functions))
+func (t *BaseTool) GetTools() []llm.Tool {
+	params := make([]llm.Tool, 0, len(t.functions))
 	for _, function := range t.functions {
-		param := convertDO2Tool(function)
-		params = append(params, param)
+		params = append(params, convertDO2Tool(function))
 	}
 	return params
 }
