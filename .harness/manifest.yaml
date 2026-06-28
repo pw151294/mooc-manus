@@ -12,6 +12,7 @@ cognition:
     - rules/43-agent-composition.md
     - rules/44-tool-registration.md
     - rules/45-event-emission.md
+    - rules/46-prompt-management.md
   playbooksIndex: playbooks/INDEX.md
   knowledgeIndex: knowledge/README.md
 
