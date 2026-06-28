@@ -11,9 +11,10 @@
 **Spec:** `docs/superpowers/specs/2026-06-28-llm-protocol-abstraction-design.md`
 
 **包路径约定**：
-- 领域层包导入路径：`mooc-manus/internal/domains/models/llm`，包名 `llm`。
-- 基础设施层（既有）包导入路径：`mooc-manus/internal/infra/external/llm`，包名 `llm`。
-- 同名冲突时，按调用点取别名：领域层用 `llm`，基础设施层用 `llmadapter`（举例：`import llmadapter "mooc-manus/internal/infra/external/llm"`）。
+- 领域层包导入路径：`mooc-manus/internal/domains/models/llm`,包名 `llm`(只放 `Message` / `Tool` / `ToolCall` / `Role` 等数据结构)。
+- **`Invoker` 接口的包**：`mooc-manus/internal/domains/models/invoker`,包名 `invoker`。**与 plan 原始设计的偏离**:`Invoker` 同时依赖 `events.AgentEvent` 与 `llm.Message`,而 `events` 又需要依赖 `llm.ToolCall`,直接放 `llm` 包会形成 import cycle,因此独立为 `invoker` 包(在 Task 5 执行过程中发现并修正)。后续所有引用 `Invoker` 接口的代码统一写 `invoker.Invoker`,而不是 `llm.Invoker`。
+- 基础设施层(既有)包导入路径:`mooc-manus/internal/infra/external/llm`,包名 `llm`。
+- 同名冲突时,按调用点取别名:领域层用 `llm`,基础设施层用 `llmadapter`(举例:`import llmadapter "mooc-manus/internal/infra/external/llm"`)。
 
 **TDD 策略**：
 - 有真实逻辑的改动（双向转换、Compact bug 修复、Provider 选择分支）走严格 TDD：先写失败测试 → 看红 → 写最小实现 → 看绿 → 重构。
