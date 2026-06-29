@@ -12,7 +12,6 @@ import (
 	"mooc-manus/internal/infra/external/health_checker"
 	"mooc-manus/internal/infra/repositories"
 	"net/http"
-	"path/filepath"
 
 	"github.com/gin-gonic/gin"
 )
@@ -92,21 +91,8 @@ func InitRouter() *gin.Engine {
 
 	// 2.2.6 NATIVE 内置工具 Provider 装配（fileRead / fileEdit / bashExec）
 	// 详细约束见 .harness/rules/49-native-builtin.md
-	// WorkspaceBaseDir 为空时回退到 ${storage.root_dir}/native-workspace
-	nativeWorkspaceDir := config.Cfg.Native.WorkspaceBaseDir
-	if nativeWorkspaceDir == "" {
-		nativeWorkspaceDir = filepath.Join(rootDir, "native-workspace")
-	}
-	nativeToolsProvider := tools.NewNativeToolsProvider(tools.NativeToolsOptions{
-		WorkspaceBaseDir:      nativeWorkspaceDir,
-		SensitivePathDenyList: config.Cfg.Native.SensitivePathDenyList,
-		MaxFileReadBytes:      config.Cfg.Native.MaxFileReadBytes,
-		BashCommandDenyList:   config.Cfg.Native.BashCommandDenyList,
-		BashTimeoutDefaultSec: config.Cfg.Native.BashTimeoutDefault,
-		BashTimeoutMaxSec:     config.Cfg.Native.BashTimeoutMax,
-		BashOutputCap:         config.Cfg.Native.BashOutputCap,
-		BashConcurrency:       config.Cfg.Native.BashConcurrency,
-	})
+	// provider 内部完成默认值回退与 NativeWorkspace/BashDenyList 装配
+	nativeToolsProvider := tools.NewNativeToolsProvider(config.Cfg.Native, rootDir)
 
 	// 2.3 Agent 模块 Domain Service（依赖 Skill repo，放在 Skill Domain Service 之后）
 	baseAgentDomainSvc := agents.NewBaseAgentDomainService(

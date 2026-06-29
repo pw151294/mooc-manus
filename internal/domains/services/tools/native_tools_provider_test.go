@@ -3,21 +3,26 @@ package tools
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"mooc-manus/config"
 )
 
+// newTestProvider 测试辅助：用 t.TempDir() 作为 WorkspaceBaseDir 构造 provider
+// bash 配置使用与 bash_exec_test.go 一致的小上限便于测试
 func newTestProvider(t *testing.T) NativeToolsProvider {
 	t.Helper()
-	return NewNativeToolsProvider(NativeToolsOptions{
+	return NewNativeToolsProvider(config.NativeConfig{
 		WorkspaceBaseDir:      t.TempDir(),
 		SensitivePathDenyList: nil,
 		MaxFileReadBytes:      0, // 走默认 10 MiB
 		BashCommandDenyList:   nil,
-		BashTimeoutDefaultSec: 5,
-		BashTimeoutMaxSec:     10,
+		BashTimeoutDefault:    5,
+		BashTimeoutMax:        10,
 		BashOutputCap:         1024,
 		BashConcurrency:       4,
-	})
+	}, "")
 }
 
 func TestNativeToolsProvider_BuildTools(t *testing.T) {
@@ -66,13 +71,13 @@ func TestNativeToolsProvider_BuildToolsDifferentMessageIds(t *testing.T) {
 
 func TestNativeToolsProvider_Cleanup(t *testing.T) {
 	baseDir := t.TempDir()
-	p := NewNativeToolsProvider(NativeToolsOptions{
-		WorkspaceBaseDir:      baseDir,
-		BashTimeoutDefaultSec: 5,
-		BashTimeoutMaxSec:     10,
-		BashOutputCap:         1024,
-		BashConcurrency:       4,
-	})
+	p := NewNativeToolsProvider(config.NativeConfig{
+		WorkspaceBaseDir:   baseDir,
+		BashTimeoutDefault: 5,
+		BashTimeoutMax:     10,
+		BashOutputCap:      1024,
+		BashConcurrency:    4,
+	}, "")
 	// 预先建一个 workspace 子目录 + 文件，确认 Cleanup 后被清除
 	wsDir := filepath.Join(baseDir, "msg-x")
 	if err := os.MkdirAll(wsDir, 0755); err != nil {
@@ -95,13 +100,13 @@ func TestNativeToolsProvider_Cleanup(t *testing.T) {
 
 func TestNativeToolsProvider_FileEditUsesProviderWorkspace(t *testing.T) {
 	baseDir := t.TempDir()
-	p := NewNativeToolsProvider(NativeToolsOptions{
-		WorkspaceBaseDir:      baseDir,
-		BashTimeoutDefaultSec: 5,
-		BashTimeoutMaxSec:     10,
-		BashOutputCap:         1024,
-		BashConcurrency:       4,
-	})
+	p := NewNativeToolsProvider(config.NativeConfig{
+		WorkspaceBaseDir:   baseDir,
+		BashTimeoutDefault: 5,
+		BashTimeoutMax:     10,
+		BashOutputCap:      1024,
+		BashConcurrency:    4,
+	}, "")
 	tools, err := p.BuildTools("msg-edit")
 	if err != nil {
 		t.Fatalf("BuildTools failed: %v", err)
@@ -137,4 +142,51 @@ func TestNativeToolsProvider_FileEditUsesProviderWorkspace(t *testing.T) {
 	if string(got) != "hello manus\n" {
 		t.Fatalf("file content not updated: %q", string(got))
 	}
+}
+
+// TestNativeToolsProvider_WorkspaceBaseDirFallback 验证 WorkspaceBaseDir 为空时
+// 自动回退到 ${storageRootDir}/native-workspace
+func TestNativeToolsProvider_WorkspaceBaseDirFallback(t *testing.T) {
+	storageRoot := t.TempDir()
+	p := NewNativeToolsProvider(config.NativeConfig{
+		WorkspaceBaseDir:   "", // 故意留空触发回退
+		BashTimeoutDefault: 5,
+		BashTimeoutMax:     10,
+		BashOutputCap:      1024,
+		BashConcurrency:    4,
+	}, storageRoot)
+
+	// 用 Cleanup 路径间接验证 provider 真的把 workspace 拼到了回退目录
+	tools, err := p.BuildTools("msg-fb")
+	if err != nil {
+		t.Fatalf("BuildTools failed: %v", err)
+	}
+
+	// 触发 fileEdit 写一个文件，验证写入到回退目录下
+	var fileEdit Tool
+	for _, tool := range tools {
+		if tool.HasTool(FileEditFunctionName) {
+			fileEdit = tool
+			break
+		}
+	}
+	expectedDir := filepath.Join(storageRoot, "native-workspace", "msg-fb")
+	if err := os.MkdirAll(expectedDir, 0755); err != nil {
+		t.Fatalf("seed workspace failed: %v", err)
+	}
+	target := filepath.Join(expectedDir, "a.txt")
+	if err := os.WriteFile(target, []byte("hello fallback\n"), 0644); err != nil {
+		t.Fatalf("seed file failed: %v", err)
+	}
+	r := fileEdit.Invoke(FileEditFunctionName, `{"path":"a.txt","old_string":"fallback","new_string":"works"}`)
+	if !r.Success {
+		t.Fatalf("fileEdit failed (回退目录未生效): %s", r.Message)
+	}
+	got, _ := os.ReadFile(target)
+	if !strings.Contains(string(got), "works") {
+		t.Fatalf("expect 'works' in file, got: %q", string(got))
+	}
+
+	// 清理
+	_ = p.Cleanup("msg-fb")
 }

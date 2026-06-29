@@ -223,13 +223,14 @@ func (s *BaseAgentDomainServiceImpl) createBaseAgent(request agents.ChatRequest)
 	}
 
 	// 追加 NATIVE 内置工具（fileRead / fileEdit / bashExec）
-	// 仅在 nativeToolsProvider 装配时启用；messageId 透传供 fileEdit 隔离 workspace 与 bashExec audit 关联
-	if s.nativeToolsProvider != nil {
-		nativeTools, err := s.nativeToolsProvider.BuildTools(request.MessageId)
-		if err != nil {
-			logger.Error("init native tools failed", zap.Error(err))
-			return nil, err
-		}
+	// provider 为 nil 时 tools.NativeTools 返回 (nil, nil),无需调用方自行判空
+	// messageId 透传供 fileEdit 隔离 workspace 与 bashExec audit 关联
+	nativeTools, err := tools.NativeTools(s.nativeToolsProvider, request.MessageId)
+	if err != nil {
+		logger.Error("init native tools failed", zap.Error(err))
+		return nil, err
+	}
+	if len(nativeTools) > 0 {
 		baseTools = append(baseTools, nativeTools...)
 		logger.Info("init native tools success", zap.Int("native_count", len(nativeTools)))
 	}

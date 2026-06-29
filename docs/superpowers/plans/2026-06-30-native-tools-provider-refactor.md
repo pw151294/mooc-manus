@@ -265,3 +265,63 @@ baseAgentAppSvc := app_svc.NewBaseAgentApplicationService(baseAgentDomainSvc, sk
 | 与 D7=A(Skill 容器复用)生命周期耦合误差 | 无 — Cleanup 行为透传,语义零变化 |
 | 增加一层间接造成性能损耗 | 可忽略 — Provider 持有装配好的 workspace/denyList,BuildTools 只是 New 三个 struct |
 | 影响已 commit 但未 push 的 8d92a2e | 不影响 — 重构作为新 commit 叠加,推送时按时间顺序两次都会上去 |
+
+## 9. 二次重构(同日):config 直传与 NativeTools 包装
+
+**触发**:用户指出 b4afa4e 的两处仍嫌冗长 ——
+1. `route.go` §2.2.6 用 14 行做 `config.NativeConfig` → `NativeToolsOptions` 的逐字段拷贝
+2. `createBaseAgent` 装配三路径不对称(Skill 走 `tools.SkillTools(...)` 函数,NATIVE 走 `provider.BuildTools(...)` 方法)
+
+**用户决策**:
+- A:`NewNativeToolsProvider` 第二参数 = `storageRootDir string`(只传需要的)
+- B:`tools.NativeTools` 函数内部判 `provider == nil`,调用方简化
+- C:domain 包 import config 包(可接受,与 Skill 体系 `NewDockerSkillExecutor(config.Cfg.Skill.*)` 对称)
+- D:不一并包 `NewDockerSkillExecutor`(executor 是底层具体类型,无需再包)
+
+### 9.1 签名最终演进
+
+| 函数 | 8d92a2e(首版) | b4afa4e(一次重构) | 本次(二次重构) |
+|---|---|---|---|
+| `NewBaseAgentDomainService` 参数数 | 13 | 8 | 8(不变) |
+| `tools.NativeTools` 签名 | `(workspace, denyList, 4×int, messageId)` | **删除** | `(provider, messageId)` 包装 |
+| `NewNativeToolsProvider` 入口 | N/A | `(NativeToolsOptions)` | `(config.NativeConfig, storageRootDir)` |
+| `route.go` §2.2.6 行数 | ~14 | ~14 | **1** |
+
+### 9.2 删除项
+
+- `tools.NativeToolsOptions` 结构体(被 `config.NativeConfig` 直传取代)
+- `route.go` 中 `filepath` import 与 `nativeWorkspaceDir` 中间变量
+
+### 9.3 新增项
+
+- `tools.NativeTools(provider, messageId)` 函数(builtin.go)
+- `tools` 包 `import "mooc-manus/config"`(domain 显式依赖 config 包,有 Skill 先例)
+- 单测 `TestNativeToolsProvider_WorkspaceBaseDirFallback`(覆盖默认值回退分支)
+
+### 9.4 三条工具装配路径最终对称
+
+```go
+// MCP + A2A
+baseTools, err := tools.InitTools(providers, proId2Funcs, srvCfgs)
+
+// Skill 内置(loadSkill + executeSkill)
+if len(request.SkillRefs) > 0 {
+    skillTools, err := tools.SkillTools(s.skillRepo, ..., request.MessageId)
+    baseTools = append(baseTools, skillTools...)
+}
+
+// NATIVE 内置(fileRead + fileEdit + bashExec)
+nativeTools, err := tools.NativeTools(s.nativeToolsProvider, request.MessageId)
+if len(nativeTools) > 0 {
+    baseTools = append(baseTools, nativeTools...)
+}
+```
+
+三类工具调用语法完全对称,可读性显著提升。
+
+### 9.5 验证结果
+
+- 编译 ✓
+- 单测 5 个(含 fallback)全绿
+- 静态:`NativeToolsOptions` 已删除 ✓;`tools.NativeTools(` 在 agent.go 出现 1 处 ✓;`exec.Command*` 限定 ✓
+- harness validate ✓

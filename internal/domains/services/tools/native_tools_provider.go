@@ -1,24 +1,13 @@
 package tools
 
 import (
+	"path/filepath"
+
+	"mooc-manus/config"
 	"mooc-manus/pkg/logger"
 
 	"go.uber.org/zap"
 )
-
-// NativeToolsOptions 装配 NativeToolsProvider 所需的全部配置
-// 由 route.go 从 config.NativeConfig 字段拷贝填充；本结构刻意放在 tools 包内，
-// 以保持 domain 层不依赖 config 包（DDD 分层约束）
-type NativeToolsOptions struct {
-	WorkspaceBaseDir      string
-	SensitivePathDenyList []string
-	MaxFileReadBytes      int64
-	BashCommandDenyList   []string
-	BashTimeoutDefaultSec int
-	BashTimeoutMaxSec     int
-	BashOutputCap         int
-	BashConcurrency       int
-}
 
 // NativeToolsProvider 原生内置工具（fileRead / fileEdit / bashExec）提供方
 // 单例装配，持有 NativeWorkspace + BashDenyList + bash 上限配置
@@ -35,23 +24,33 @@ type NativeToolsProvider interface {
 }
 
 // NewNativeToolsProvider 单例装配 NativeToolsProvider
-// 内部一次性构造 NativeWorkspace 与 BashDenyList；BuildTools 复用这些状态
-func NewNativeToolsProvider(opts NativeToolsOptions) NativeToolsProvider {
-	workspace := NewNativeWorkspace(opts.WorkspaceBaseDir, opts.SensitivePathDenyList, opts.MaxFileReadBytes)
-	denyList := NewBashDenyList(opts.BashCommandDenyList)
+// 直接接受 config.NativeConfig，并在内部完成默认值回退与 NativeWorkspace/BashDenyList 装配
+// storageRootDir 用于 WorkspaceBaseDir 为空时回退到 ${storage.root_dir}/native-workspace
+// 该签名与 NewDockerSkillExecutor 直接消费 config.Cfg.Skill.* 字段保持对称
+func NewNativeToolsProvider(nativeCfg config.NativeConfig, storageRootDir string) NativeToolsProvider {
+	// WorkspaceBaseDir 默认值回退（由 route.go 内迁至 provider）
+	workspaceDir := nativeCfg.WorkspaceBaseDir
+	if workspaceDir == "" {
+		workspaceDir = filepath.Join(storageRootDir, "native-workspace")
+	}
+
+	workspace := NewNativeWorkspace(workspaceDir, nativeCfg.SensitivePathDenyList, nativeCfg.MaxFileReadBytes)
+	denyList := NewBashDenyList(nativeCfg.BashCommandDenyList)
+
 	logger.Info("[native] NativeToolsProvider initialized",
-		zap.Int("bash_timeout_default_sec", opts.BashTimeoutDefaultSec),
-		zap.Int("bash_timeout_max_sec", opts.BashTimeoutMaxSec),
-		zap.Int("bash_output_cap", opts.BashOutputCap),
-		zap.Int("bash_concurrency", opts.BashConcurrency),
+		zap.String("workspace_base_dir", workspaceDir),
+		zap.Int("bash_timeout_default_sec", nativeCfg.BashTimeoutDefault),
+		zap.Int("bash_timeout_max_sec", nativeCfg.BashTimeoutMax),
+		zap.Int("bash_output_cap", nativeCfg.BashOutputCap),
+		zap.Int("bash_concurrency", nativeCfg.BashConcurrency),
 	)
 	return &nativeToolsProviderImpl{
 		workspace:             workspace,
 		denyList:              denyList,
-		bashTimeoutDefaultSec: opts.BashTimeoutDefaultSec,
-		bashTimeoutMaxSec:     opts.BashTimeoutMaxSec,
-		bashOutputCap:         opts.BashOutputCap,
-		bashConcurrency:       opts.BashConcurrency,
+		bashTimeoutDefaultSec: nativeCfg.BashTimeoutDefault,
+		bashTimeoutMaxSec:     nativeCfg.BashTimeoutMax,
+		bashOutputCap:         nativeCfg.BashOutputCap,
+		bashConcurrency:       nativeCfg.BashConcurrency,
 	}
 }
 
