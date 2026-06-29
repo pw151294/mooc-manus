@@ -40,11 +40,12 @@
 - 🟡 **Go 编码规范** (`rules/41-go-conventions.md`) — 迁移自 `.harness/archive/cursorrules-pre-harness-v1` 与 `.harness/archive/conventions-pre-harness-v1.md`。本规则覆盖错误处理、日志、命名、测试四
 - 🟠 **LLM 协议抽象（Message / Tool 值对象）** (`rules/42-llm-protocol.md`) — LLM 调用必须通过 `internal/domains/models/llm/` 下的 `Message` / `Tool` / `ToolCall` 值对象与统一 `Invoker` 接口（`internal/domains/model
 - 🟠 **Agent 编排（4 种 Agent 调用）** (`rules/43-agent-composition.md`) — mooc-manus 提供 4 种 Agent 实现：`BaseAgent` / `ReActAgent` / `PlanAgent` / `A2ADomainService`（A2A Agent），位于 `internal/domains
-- 🟡 **工具注册（ToolProvider）** (`rules/44-tool-registration.md`) — 后端工具分三类：**Skill 内置工具**（loadSkill / executeSkill）、**MCP 工具**（接 mcp-go client）、**A2A 工具**（接远端 agent）。所有工具最终都以 `tools.Tool`
+- 🟡 **工具注册（ToolProvider）** (`rules/44-tool-registration.md`) — 后端工具分四类：**Skill 内置工具**（loadSkill / executeSkill）、**MCP 工具**（接 mcp-go client）、**A2A 工具**（接远端 agent）、**NATIVE 内置工具**（fileR
 - 🟠 **事件发布（AgentEvent）** (`rules/45-event-emission.md`) — 后端 Agent 通过 `chan events.AgentEvent` 向 SSE 层流式发布事件，事件类型定义在 `internal/domains/models/events/constants.go`。本规则约束事件类型、paylo
 - 🔴 **提示词管理（PromptManager）** (`rules/46-prompt-management.md`) — 后端所有 system prompt / plan / react / a2a / sre 模板由 `internal/domains/models/prompts/` 下的 `PromptManager` 全局单例统一加载（参考 `man
 - 🔴 **ChatMemory 生命周期与隔离** (`rules/47-memory-boundaries.md`) — `ChatMemory` 保存单一 conversation 的 LLM 对话历史（参考 `internal/domains/models/memory/memory.go` 与 `manager.go`）。所有访问统一走 `memory.
 - 🔴 **Skill 挂载与执行（DockerSkillExecutor）** (`rules/48-skill-executor.md`) — Skill 的执行流程：`ExecuteSkillTool.Invoke` 把 `SkillFiles` 下载到挂载源 → `DockerSkillExecutor` 创建容器（一次性或池化）→ 注入 bash 脚本执行 → 把 outpu
+- 🟠 **NATIVE 内置工具（fileRead / fileEdit / bashExec）** (`rules/49-native-builtin.md`) — manus 2026-06-29 引入第四类工具 **NATIVE 内置工具**，对齐 openclaw / Claude Code / Codex 编程 agent 的原生本地能力：直接读取宿主机文件、对工作区文件做精确字符串替换、在项目
 <!-- HARNESS-GENERATED-END -->
 
 ---

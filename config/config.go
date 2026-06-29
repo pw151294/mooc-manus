@@ -16,6 +16,7 @@ type GlobalConfig struct {
 	LoggerConfig LoggerConfig   `toml:"logger"`
 	Storage      StorageConfig  `toml:"storage"`
 	Skill        SkillConfig    `toml:"skill"`
+	Native       NativeConfig   `toml:"native"`
 }
 
 type RedisConfig struct {
@@ -46,6 +47,19 @@ type SkillConfig struct {
 	DockerHost  string            `toml:"docker_host"`   // Docker daemon 地址
 	DockerImage string            `toml:"docker_image"`  // 默认 Skill 执行镜像
 	Env         map[string]string `toml:"env"`           // 注入到 Skill 容器的环境变量（静态配置）
+}
+
+// NativeConfig manus 原生内置工具（fileRead / fileEdit / bashExec）配置
+// 参见 docs/superpowers/plans/2026-06-29-native-builtin-tools.md 与 .harness/rules/49-native-builtin.md
+type NativeConfig struct {
+	WorkspaceBaseDir      string   `toml:"workspace_base_dir"`       // fileEdit 写入根目录，默认 ${baseDir}/workspace，与 Skill.BaseDir 对齐
+	MaxFileReadBytes      int64    `toml:"max_file_read_bytes"`      // fileRead 单文件读取上限，默认 10 MiB
+	SensitivePathDenyList []string `toml:"sensitive_path_deny_list"` // fileRead 敏感路径前缀黑名单
+	BashCommandDenyList   []string `toml:"bash_command_deny_list"`   // bashExec 命令正则黑名单（追加到默认基线之上）
+	BashTimeoutDefault    int      `toml:"bash_timeout_default"`     // bashExec 默认超时秒数，默认 120
+	BashTimeoutMax        int      `toml:"bash_timeout_max"`         // bashExec 超时上限秒数，默认 600
+	BashOutputCap         int      `toml:"bash_output_cap"`          // bashExec stdout+stderr 合并截断字节数，默认 32 KiB
+	BashConcurrency       int      `toml:"bash_concurrency"`         // bashExec 全局并发上限，默认 4
 }
 
 type LoggerConfig struct {

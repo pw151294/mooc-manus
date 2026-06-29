@@ -5,7 +5,7 @@ severity: medium
 
 # 工具注册（ToolProvider）
 
-后端工具分三类：**Skill 内置工具**（loadSkill / executeSkill）、**MCP 工具**（接 mcp-go client）、**A2A 工具**（接远端 agent）。所有工具最终都以 `tools.Tool` 形式装配到 Agent 的 `tools []tools.Tool`，注册流程必须经 ToolProvider 抽象，不得在 Agent 内硬编码。
+后端工具分四类：**Skill 内置工具**（loadSkill / executeSkill）、**MCP 工具**（接 mcp-go client）、**A2A 工具**（接远端 agent）、**NATIVE 内置工具**（fileRead / fileEdit / bashExec，2026-06-29 新增；R-48 偏离声明见 R-49）。所有工具最终都以 `tools.Tool` 形式装配到 Agent 的 `tools []tools.Tool`，注册流程必须经 ToolProvider 抽象，不得在 Agent 内硬编码。
 
 ## 禁止行为
 
@@ -34,6 +34,7 @@ severity: medium
    | Skill 内置 | `tools.SkillTools(skillRepo, versionRepo, storage, executor, skillRefs, messageId)` | `ChatRequest.SkillRefs` 非空 | 单次消息（messageId 绑定） |
    | MCP | `ToolProviderDomainService.LoadByProviderId` + `convertDO2Tool` | Agent 配置引用对应 provider | Provider 生命周期内复用 |
    | A2A | `A2ADomainService.A2AChat` 包装 | Agent 配置指向 a2a server | 每次对话一次连接 |
+   | NATIVE 内置 | `tools.NativeTools(workspace, denyList, bashTimeoutDefault, bashTimeoutMax, bashOutputCap, bashConcurrency, messageId)` | NativeWorkspace + BashDenyList 装配齐全（始终启用） | 单次消息（messageId 绑定 fileEdit workspace 与 bashExec audit） |
 
 2. **统一 `tools.Tool` 接口**
    - Tool 需实现 `Name() / Description() / Parameters() / Invoke(ctx, args) (string, error)`

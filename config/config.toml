@@ -40,3 +40,20 @@ docker_image = "python:3.11-slim"
 SRE_MCP_SERVER_URL = "http://10.103.139.101:9605"
 SRE_WORKSPACE_ID = "17"
 SRE_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiIxIiwiYWNjb3VudCI6ImFkbWluIiwiZXhwIjoxNzgyNDY0OTQ5LCJpYXQiOjE3ODI0NjEzNDl9.wyGvtnSdbttbBPuZnunuv-xZZZAHBMwCOiA12ZXu7nU"
+
+[native]
+workspace_base_dir = "./data/native-workspace"
+max_file_read_bytes = 10485760
+sensitive_path_deny_list = [
+  "/etc/shadow",
+  "/etc/sudoers",
+  "/etc/sudoers.d",
+  "/root/.ssh",
+  "/root/.aws",
+  "/root/.gnupg",
+]
+bash_command_deny_list = []
+bash_timeout_default = 120
+bash_timeout_max = 600
+bash_output_cap = 32768
+bash_concurrency = 4

@@ -12,6 +12,7 @@ import (
 	"mooc-manus/internal/infra/external/health_checker"
 	"mooc-manus/internal/infra/repositories"
 	"net/http"
+	"path/filepath"
 
 	"github.com/gin-gonic/gin"
 )
@@ -89,6 +90,20 @@ func InitRouter() *gin.Engine {
 		config.Cfg.Skill.Env, // 注入静态环境变量配置
 	)
 
+	// 2.2.6 NATIVE 内置工具基础设施（fileRead / fileEdit / bashExec）
+	// 详细约束见 .harness/rules/49-native-builtin.md
+	// WorkspaceBaseDir 为空时回退到 ${storage.root_dir}/native-workspace
+	nativeWorkspaceDir := config.Cfg.Native.WorkspaceBaseDir
+	if nativeWorkspaceDir == "" {
+		nativeWorkspaceDir = filepath.Join(rootDir, "native-workspace")
+	}
+	nativeWorkspace := tools.NewNativeWorkspace(
+		nativeWorkspaceDir,
+		config.Cfg.Native.SensitivePathDenyList,
+		config.Cfg.Native.MaxFileReadBytes,
+	)
+	bashDenyList := tools.NewBashDenyList(config.Cfg.Native.BashCommandDenyList)
+
 	// 2.3 Agent 模块 Domain Service（依赖 Skill repo，放在 Skill Domain Service 之后）
 	baseAgentDomainSvc := agents.NewBaseAgentDomainService(
 		appConfigDomainSvc,
@@ -98,6 +113,12 @@ func InitRouter() *gin.Engine {
 		skillVersionRepo,
 		skillExecutor,
 		fs,
+		nativeWorkspace,
+		bashDenyList,
+		config.Cfg.Native.BashTimeoutDefault,
+		config.Cfg.Native.BashTimeoutMax,
+		config.Cfg.Native.BashOutputCap,
+		config.Cfg.Native.BashConcurrency,
 	)
 	a2aDomainSvc := agents.NewA2ADomainService(baseAgentDomainSvc, appConfigDomainSvc, providerDomainSvc, functionDomainSvc)
 	baseFlowDomainSvc := flows.NewBaseFlowDomainService(appConfigDomainSvc, providerDomainSvc, functionDomainSvc)
@@ -118,7 +139,7 @@ func InitRouter() *gin.Engine {
 	skillAppSvc := app_svc.NewSkillApplicationService(skillDomainSvc, skillVersionDomainSvc, skillProviderDomainSvc)
 
 	// 3.3 Agent 模块 Application Service
-	baseAgentAppSvc := app_svc.NewBaseAgentApplicationService(baseAgentDomainSvc, skillExecutor)
+	baseAgentAppSvc := app_svc.NewBaseAgentApplicationService(baseAgentDomainSvc, skillExecutor, nativeWorkspace)
 	a2aAppSvc := app_svc.NewA2AApplicationService(a2aDomainSvc)
 	baseFlowAppSvc := app_svc.NewFlowApplicationService(baseFlowDomainSvc)
 

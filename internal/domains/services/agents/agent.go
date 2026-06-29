@@ -34,6 +34,13 @@ type BaseAgentDomainServiceImpl struct {
 	versionRepo        repositories.SkillVersionRepository
 	skillExecutor      tools.SkillExecutor
 	storage            file_storage.FileStorage
+	// NATIVE 工具（fileRead / fileEdit / bashExec）依赖：见 .harness/rules/49-native-builtin.md
+	nativeWorkspace       *tools.NativeWorkspace
+	bashDenyList          *tools.BashDenyList
+	bashTimeoutDefaultSec int
+	bashTimeoutMaxSec     int
+	bashOutputCap         int
+	bashConcurrency       int
 }
 
 func NewBaseAgentDomainService(
@@ -44,15 +51,27 @@ func NewBaseAgentDomainService(
 	versionRepo repositories.SkillVersionRepository,
 	skillExecutor tools.SkillExecutor,
 	storage file_storage.FileStorage,
+	nativeWorkspace *tools.NativeWorkspace,
+	bashDenyList *tools.BashDenyList,
+	bashTimeoutDefaultSec int,
+	bashTimeoutMaxSec int,
+	bashOutputCap int,
+	bashConcurrency int,
 ) BaseAgentDomainService {
 	return &BaseAgentDomainServiceImpl{
-		appConfigDomainSvc: appConfigDomainSvc,
-		providerDomainSvc:  providerDomainSvc,
-		functionDomainSvc:  functionDomainSvc,
-		skillRepo:          skillRepo,
-		versionRepo:        versionRepo,
-		skillExecutor:      skillExecutor,
-		storage:            storage,
+		appConfigDomainSvc:    appConfigDomainSvc,
+		providerDomainSvc:     providerDomainSvc,
+		functionDomainSvc:     functionDomainSvc,
+		skillRepo:             skillRepo,
+		versionRepo:           versionRepo,
+		skillExecutor:         skillExecutor,
+		storage:               storage,
+		nativeWorkspace:       nativeWorkspace,
+		bashDenyList:          bashDenyList,
+		bashTimeoutDefaultSec: bashTimeoutDefaultSec,
+		bashTimeoutMaxSec:     bashTimeoutMaxSec,
+		bashOutputCap:         bashOutputCap,
+		bashConcurrency:       bashConcurrency,
 	}
 }
 
@@ -215,6 +234,26 @@ func (s *BaseAgentDomainServiceImpl) createBaseAgent(request agents.ChatRequest)
 		}
 		baseTools = append(baseTools, skillTools...)
 		logger.Info("init skill tools success", zap.Int("skill_count", len(request.SkillRefs)))
+	}
+
+	// 追加 NATIVE 内置工具（fileRead / fileEdit / bashExec）
+	// 仅在 nativeWorkspace 装配齐全时启用；messageId 透传供 fileEdit 隔离工作区与 bashExec audit 关联
+	if s.nativeWorkspace != nil && s.bashDenyList != nil {
+		nativeTools, err := tools.NativeTools(
+			s.nativeWorkspace,
+			s.bashDenyList,
+			s.bashTimeoutDefaultSec,
+			s.bashTimeoutMaxSec,
+			s.bashOutputCap,
+			s.bashConcurrency,
+			request.MessageId,
+		)
+		if err != nil {
+			logger.Error("init native tools failed", zap.Error(err))
+			return nil, err
+		}
+		baseTools = append(baseTools, nativeTools...)
+		logger.Info("init native tools success", zap.Int("native_count", len(nativeTools)))
 	}
 
 	// 构建系统提示词（拼接 Skill 元信息）

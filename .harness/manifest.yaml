@@ -15,6 +15,7 @@ cognition:
     - rules/46-prompt-management.md
     - rules/47-memory-boundaries.md
     - rules/48-skill-executor.md
+    - rules/49-native-builtin.md
   playbooksIndex: playbooks/INDEX.md
   knowledgeIndex: knowledge/README.md
 

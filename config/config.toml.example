@@ -47,3 +47,22 @@ docker_image = "python:3.11-slim"
 SRE_MCP_SERVER_URL = "http://10.103.139.161:9605"
 SRE_WORKSPACE_ID = "17"
 SRE_TOKEN = "PLACEHOLDER_TOKEN_HERE"  # 生产环境请通过 export SRE_TOKEN=真实token 覆盖
+
+# manus 原生内置工具（fileRead / fileEdit / bashExec）配置
+# 见 .harness/rules/49-native-builtin.md（R-48 偏离声明与软护栏）
+[native]
+workspace_base_dir = "./data/native-workspace"     # fileEdit 写入根目录
+max_file_read_bytes = 10485760                     # fileRead 单文件读取上限，默认 10 MiB
+sensitive_path_deny_list = [                       # fileRead 敏感路径前缀黑名单
+  "/etc/shadow",
+  "/etc/sudoers",
+  "/etc/sudoers.d",
+  "/root/.ssh",
+  "/root/.aws",
+  "/root/.gnupg",
+]
+bash_command_deny_list = []                        # bashExec 命令正则黑名单（追加到默认基线之上，空即只用基线）
+bash_timeout_default = 120                         # bashExec 默认超时秒数
+bash_timeout_max = 600                             # bashExec 超时上限秒数
+bash_output_cap = 32768                            # bashExec 输出截断字节数（stdout+stderr 合并）
+bash_concurrency = 4                               # bashExec 全局并发上限

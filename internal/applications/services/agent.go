@@ -21,17 +21,20 @@ type BaseAgentApplicationService interface {
 }
 
 type BaseAgentApplicationServiceImpl struct {
-	agentDomainSvc agents.BaseAgentDomainService
-	skillExecutor  tools.SkillExecutor // 用于 SSE 流结束时清理 skill 容器（D7=A）
+	agentDomainSvc  agents.BaseAgentDomainService
+	skillExecutor   tools.SkillExecutor      // 用于 SSE 流结束时清理 skill 容器（D7=A）
+	nativeWorkspace *tools.NativeWorkspace   // 用于 SSE 流结束时清理 NATIVE workspace 目录
 }
 
 func NewBaseAgentApplicationService(
 	agentDomainSvc agents.BaseAgentDomainService,
 	skillExecutor tools.SkillExecutor,
+	nativeWorkspace *tools.NativeWorkspace,
 ) BaseAgentApplicationService {
 	return &BaseAgentApplicationServiceImpl{
-		agentDomainSvc: agentDomainSvc,
-		skillExecutor:  skillExecutor,
+		agentDomainSvc:  agentDomainSvc,
+		skillExecutor:   skillExecutor,
+		nativeWorkspace: nativeWorkspace,
 	}
 }
 
@@ -47,6 +50,18 @@ func (s *BaseAgentApplicationServiceImpl) cleanupSkillByMessageID(messageId stri
 	}
 }
 
+// cleanupNativeWorkspaceByMessageID 在 SSE 流关闭前清理 NATIVE 工具的 workspace 目录
+// 与 cleanupSkillByMessageID 并列，消息生命周期结束即回收 fileEdit 写入的临时文件
+func (s *BaseAgentApplicationServiceImpl) cleanupNativeWorkspaceByMessageID(messageId string) {
+	if s.nativeWorkspace == nil || messageId == "" {
+		return
+	}
+	if err := s.nativeWorkspace.Cleanup(messageId); err != nil {
+		logger.Warn("cleanup native workspace failed",
+			zap.Error(err), zap.String("messageId", messageId))
+	}
+}
+
 func (s *BaseAgentApplicationServiceImpl) Chat(clientRequest dtos.ChatClientRequest, writer http.ResponseWriter) {
 	if clientRequest.ConversationId == "" {
 		clientRequest.ConversationId = uuid.New().String()
@@ -58,6 +73,7 @@ func (s *BaseAgentApplicationServiceImpl) Chat(clientRequest dtos.ChatClientRequ
 	logger.Info("start new chat", zap.String("messageId", messageId))
 	defer func() {
 		s.cleanupSkillByMessageID(messageId)
+		s.cleanupNativeWorkspaceByMessageID(messageId)
 		sse.CloseChat(messageId)
 		logger.Info("close chat", zap.String("messageId", messageId))
 	}()
@@ -85,6 +101,7 @@ func (s *BaseAgentApplicationServiceImpl) CreatePlan(clientRequest dtos.AgentPla
 	logger.Info("start create plans", zap.String("messageId", messageId))
 	defer func() {
 		s.cleanupSkillByMessageID(messageId)
+		s.cleanupNativeWorkspaceByMessageID(messageId)
 		sse.CloseChat(messageId)
 		logger.Info("end create plans", zap.String("messageId", messageId))
 	}()
@@ -128,6 +145,7 @@ func (s *BaseAgentApplicationServiceImpl) UpdatePlan(clientRequest dtos.AgentPla
 	logger.Info("start update plans", zap.String("messageId", messageId))
 	defer func() {
 		s.cleanupSkillByMessageID(messageId)
+		s.cleanupNativeWorkspaceByMessageID(messageId)
 		sse.CloseChat(messageId)
 		logger.Info("end update plans", zap.String("messageId", messageId))
 	}()
