@@ -84,8 +84,11 @@ R-48 §1.1「禁止跳过 SkillExecutor 直接 exec 用户脚本」原文针对 
   - `file_read_test.go`：HappyPath / OffsetLimit / SensitivePathBlocked / BinaryRejected / NotExist / IsDir / TooLarge
   - `file_edit_test.go`：HappyPath / NonUniqueRejected / ReplaceAll / NotFound / SameOldNew / PathEscapeBlocked / RequiresMessageId / AtomicNoStrayTmp
   - `native_workspace_test.go`：MkdirAll / ResolveInWorkspace / Cleanup / IsSensitivePath / expandHome
+  - `native_tools_provider_test.go`：BuildTools 返回 3 个工具且元数据正确 / 多 messageId / Cleanup 透传 / fileEdit 写入 provider 持有的 workspace
 - 静态：
   - `grep -rn "exec.Command" internal/domains/services/ | grep -v -E '(skill_executor|bash_exec)'` 应为空
   - `grep -rn "if name == \"fileRead\"\\|if name == \"bashExec\"\\|if name == \"fileEdit\"" internal/` 应为空（R-44 §禁止行为 1）
+  - `grep -rn "\\*tools\\.NativeWorkspace" internal/applications/` 应为空（application 层只持有 `tools.NativeToolsProvider` 接口）
+  - `grep -rn "tools\\.NativeTools(" .` 应为空（旧 7 参工厂已删除，统一走 `NewNativeToolsProvider`）
 - 集成：本地启动 manus，chat 触发 fileRead / fileEdit / bashExec，从前端 SSE `tool_call_*` 事件确认链路通畅
 - 审计演练：执行任意 bashExec，日志里 `grep audit=native-bash` 能 grep 到完整记录

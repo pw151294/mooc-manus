@@ -34,13 +34,9 @@ type BaseAgentDomainServiceImpl struct {
 	versionRepo        repositories.SkillVersionRepository
 	skillExecutor      tools.SkillExecutor
 	storage            file_storage.FileStorage
-	// NATIVE 工具（fileRead / fileEdit / bashExec）依赖：见 .harness/rules/49-native-builtin.md
-	nativeWorkspace       *tools.NativeWorkspace
-	bashDenyList          *tools.BashDenyList
-	bashTimeoutDefaultSec int
-	bashTimeoutMaxSec     int
-	bashOutputCap         int
-	bashConcurrency       int
+	// nativeToolsProvider 与 skillExecutor 平级：作为单一接口注入，封装 NATIVE 工具的全部配置
+	// 详细契约见 .harness/rules/49-native-builtin.md
+	nativeToolsProvider tools.NativeToolsProvider
 }
 
 func NewBaseAgentDomainService(
@@ -51,27 +47,17 @@ func NewBaseAgentDomainService(
 	versionRepo repositories.SkillVersionRepository,
 	skillExecutor tools.SkillExecutor,
 	storage file_storage.FileStorage,
-	nativeWorkspace *tools.NativeWorkspace,
-	bashDenyList *tools.BashDenyList,
-	bashTimeoutDefaultSec int,
-	bashTimeoutMaxSec int,
-	bashOutputCap int,
-	bashConcurrency int,
+	nativeToolsProvider tools.NativeToolsProvider,
 ) BaseAgentDomainService {
 	return &BaseAgentDomainServiceImpl{
-		appConfigDomainSvc:    appConfigDomainSvc,
-		providerDomainSvc:     providerDomainSvc,
-		functionDomainSvc:     functionDomainSvc,
-		skillRepo:             skillRepo,
-		versionRepo:           versionRepo,
-		skillExecutor:         skillExecutor,
-		storage:               storage,
-		nativeWorkspace:       nativeWorkspace,
-		bashDenyList:          bashDenyList,
-		bashTimeoutDefaultSec: bashTimeoutDefaultSec,
-		bashTimeoutMaxSec:     bashTimeoutMaxSec,
-		bashOutputCap:         bashOutputCap,
-		bashConcurrency:       bashConcurrency,
+		appConfigDomainSvc:  appConfigDomainSvc,
+		providerDomainSvc:   providerDomainSvc,
+		functionDomainSvc:   functionDomainSvc,
+		skillRepo:           skillRepo,
+		versionRepo:         versionRepo,
+		skillExecutor:       skillExecutor,
+		storage:             storage,
+		nativeToolsProvider: nativeToolsProvider,
 	}
 }
 
@@ -237,17 +223,9 @@ func (s *BaseAgentDomainServiceImpl) createBaseAgent(request agents.ChatRequest)
 	}
 
 	// 追加 NATIVE 内置工具（fileRead / fileEdit / bashExec）
-	// 仅在 nativeWorkspace 装配齐全时启用；messageId 透传供 fileEdit 隔离工作区与 bashExec audit 关联
-	if s.nativeWorkspace != nil && s.bashDenyList != nil {
-		nativeTools, err := tools.NativeTools(
-			s.nativeWorkspace,
-			s.bashDenyList,
-			s.bashTimeoutDefaultSec,
-			s.bashTimeoutMaxSec,
-			s.bashOutputCap,
-			s.bashConcurrency,
-			request.MessageId,
-		)
+	// 仅在 nativeToolsProvider 装配时启用；messageId 透传供 fileEdit 隔离 workspace 与 bashExec audit 关联
+	if s.nativeToolsProvider != nil {
+		nativeTools, err := s.nativeToolsProvider.BuildTools(request.MessageId)
 		if err != nil {
 			logger.Error("init native tools failed", zap.Error(err))
 			return nil, err

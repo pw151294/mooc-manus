@@ -90,19 +90,23 @@ func InitRouter() *gin.Engine {
 		config.Cfg.Skill.Env, // 注入静态环境变量配置
 	)
 
-	// 2.2.6 NATIVE 内置工具基础设施（fileRead / fileEdit / bashExec）
+	// 2.2.6 NATIVE 内置工具 Provider 装配（fileRead / fileEdit / bashExec）
 	// 详细约束见 .harness/rules/49-native-builtin.md
 	// WorkspaceBaseDir 为空时回退到 ${storage.root_dir}/native-workspace
 	nativeWorkspaceDir := config.Cfg.Native.WorkspaceBaseDir
 	if nativeWorkspaceDir == "" {
 		nativeWorkspaceDir = filepath.Join(rootDir, "native-workspace")
 	}
-	nativeWorkspace := tools.NewNativeWorkspace(
-		nativeWorkspaceDir,
-		config.Cfg.Native.SensitivePathDenyList,
-		config.Cfg.Native.MaxFileReadBytes,
-	)
-	bashDenyList := tools.NewBashDenyList(config.Cfg.Native.BashCommandDenyList)
+	nativeToolsProvider := tools.NewNativeToolsProvider(tools.NativeToolsOptions{
+		WorkspaceBaseDir:      nativeWorkspaceDir,
+		SensitivePathDenyList: config.Cfg.Native.SensitivePathDenyList,
+		MaxFileReadBytes:      config.Cfg.Native.MaxFileReadBytes,
+		BashCommandDenyList:   config.Cfg.Native.BashCommandDenyList,
+		BashTimeoutDefaultSec: config.Cfg.Native.BashTimeoutDefault,
+		BashTimeoutMaxSec:     config.Cfg.Native.BashTimeoutMax,
+		BashOutputCap:         config.Cfg.Native.BashOutputCap,
+		BashConcurrency:       config.Cfg.Native.BashConcurrency,
+	})
 
 	// 2.3 Agent 模块 Domain Service（依赖 Skill repo，放在 Skill Domain Service 之后）
 	baseAgentDomainSvc := agents.NewBaseAgentDomainService(
@@ -113,12 +117,7 @@ func InitRouter() *gin.Engine {
 		skillVersionRepo,
 		skillExecutor,
 		fs,
-		nativeWorkspace,
-		bashDenyList,
-		config.Cfg.Native.BashTimeoutDefault,
-		config.Cfg.Native.BashTimeoutMax,
-		config.Cfg.Native.BashOutputCap,
-		config.Cfg.Native.BashConcurrency,
+		nativeToolsProvider,
 	)
 	a2aDomainSvc := agents.NewA2ADomainService(baseAgentDomainSvc, appConfigDomainSvc, providerDomainSvc, functionDomainSvc)
 	baseFlowDomainSvc := flows.NewBaseFlowDomainService(appConfigDomainSvc, providerDomainSvc, functionDomainSvc)
@@ -139,7 +138,7 @@ func InitRouter() *gin.Engine {
 	skillAppSvc := app_svc.NewSkillApplicationService(skillDomainSvc, skillVersionDomainSvc, skillProviderDomainSvc)
 
 	// 3.3 Agent 模块 Application Service
-	baseAgentAppSvc := app_svc.NewBaseAgentApplicationService(baseAgentDomainSvc, skillExecutor, nativeWorkspace)
+	baseAgentAppSvc := app_svc.NewBaseAgentApplicationService(baseAgentDomainSvc, skillExecutor, nativeToolsProvider)
 	a2aAppSvc := app_svc.NewA2AApplicationService(a2aDomainSvc)
 	baseFlowAppSvc := app_svc.NewFlowApplicationService(baseFlowDomainSvc)
 

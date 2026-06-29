@@ -1,5 +1,5 @@
 # Auto-generated from .harness/rules/ - DO NOT EDIT MANUALLY
-# Last updated: 2026-06-29T10:18:25Z
+# Last updated: 2026-06-29T13:15:16Z
 
 ## Inherited from ../../.harness
 
@@ -573,7 +573,7 @@ severity: medium
    | Skill 内置 | `tools.SkillTools(skillRepo, versionRepo, storage, executor, skillRefs, messageId)` | `ChatRequest.SkillRefs` 非空 | 单次消息（messageId 绑定） |
    | MCP | `ToolProviderDomainService.LoadByProviderId` + `convertDO2Tool` | Agent 配置引用对应 provider | Provider 生命周期内复用 |
    | A2A | `A2ADomainService.A2AChat` 包装 | Agent 配置指向 a2a server | 每次对话一次连接 |
-   | NATIVE 内置 | `tools.NativeTools(workspace, denyList, bashTimeoutDefault, bashTimeoutMax, bashOutputCap, bashConcurrency, messageId)` | NativeWorkspace + BashDenyList 装配齐全（始终启用） | 单次消息（messageId 绑定 fileEdit workspace 与 bashExec audit） |
+   | NATIVE 内置 | `tools.NewNativeToolsProvider(tools.NativeToolsOptions{...}).BuildTools(messageId)` | NativeToolsProvider 装配齐全（始终启用） | 单次消息（messageId 绑定 fileEdit workspace 与 bashExec audit） |
 
 2. **统一 `tools.Tool` 接口**
    - Tool 需实现 `Name() / Description() / Parameters() / Invoke(ctx, args) (string, error)`
@@ -981,8 +981,11 @@ R-48 §1.1「禁止跳过 SkillExecutor 直接 exec 用户脚本」原文针对 
   - `file_read_test.go`：HappyPath / OffsetLimit / SensitivePathBlocked / BinaryRejected / NotExist / IsDir / TooLarge
   - `file_edit_test.go`：HappyPath / NonUniqueRejected / ReplaceAll / NotFound / SameOldNew / PathEscapeBlocked / RequiresMessageId / AtomicNoStrayTmp
   - `native_workspace_test.go`：MkdirAll / ResolveInWorkspace / Cleanup / IsSensitivePath / expandHome
+  - `native_tools_provider_test.go`：BuildTools 返回 3 个工具且元数据正确 / 多 messageId / Cleanup 透传 / fileEdit 写入 provider 持有的 workspace
 - 静态：
   - `grep -rn "exec.Command" internal/domains/services/ | grep -v -E '(skill_executor|bash_exec)'` 应为空
   - `grep -rn "if name == \"fileRead\"\\|if name == \"bashExec\"\\|if name == \"fileEdit\"" internal/` 应为空（R-44 §禁止行为 1）
+  - `grep -rn "\\*tools\\.NativeWorkspace" internal/applications/` 应为空（application 层只持有 `tools.NativeToolsProvider` 接口）
+  - `grep -rn "tools\\.NativeTools(" .` 应为空（旧 7 参工厂已删除，统一走 `NewNativeToolsProvider`）
 - 集成：本地启动 manus，chat 触发 fileRead / fileEdit / bashExec，从前端 SSE `tool_call_*` 事件确认链路通畅
 - 审计演练：执行任意 bashExec，日志里 `grep audit=native-bash` 能 grep 到完整记录

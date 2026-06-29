@@ -34,7 +34,7 @@ severity: medium
    | Skill 内置 | `tools.SkillTools(skillRepo, versionRepo, storage, executor, skillRefs, messageId)` | `ChatRequest.SkillRefs` 非空 | 单次消息（messageId 绑定） |
    | MCP | `ToolProviderDomainService.LoadByProviderId` + `convertDO2Tool` | Agent 配置引用对应 provider | Provider 生命周期内复用 |
    | A2A | `A2ADomainService.A2AChat` 包装 | Agent 配置指向 a2a server | 每次对话一次连接 |
-   | NATIVE 内置 | `tools.NativeTools(workspace, denyList, bashTimeoutDefault, bashTimeoutMax, bashOutputCap, bashConcurrency, messageId)` | NativeWorkspace + BashDenyList 装配齐全（始终启用） | 单次消息（messageId 绑定 fileEdit workspace 与 bashExec audit） |
+   | NATIVE 内置 | `tools.NewNativeToolsProvider(tools.NativeToolsOptions{...}).BuildTools(messageId)` | NativeToolsProvider 装配齐全（始终启用） | 单次消息（messageId 绑定 fileEdit workspace 与 bashExec audit） |
 
 2. **统一 `tools.Tool` 接口**
    - Tool 需实现 `Name() / Description() / Parameters() / Invoke(ctx, args) (string, error)`
