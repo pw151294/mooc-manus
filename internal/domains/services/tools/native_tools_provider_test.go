@@ -31,15 +31,16 @@ func TestNativeToolsProvider_BuildTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildTools failed: %v", err)
 	}
-	if len(tools) != 3 {
-		t.Fatalf("expect 3 tools, got %d", len(tools))
+	if len(tools) != 4 {
+		t.Fatalf("expect 4 tools, got %d", len(tools))
 	}
 
-	// 三个工具的 FunctionName 必须齐全
+	// 四个工具的 FunctionName 必须齐全
 	want := map[string]bool{
-		FileReadFunctionName: false,
-		FileEditFunctionName: false,
-		BashExecFunctionName: false,
+		FileReadFunctionName:  false,
+		FileWriteFunctionName: false,
+		FileEditFunctionName:  false,
+		BashExecFunctionName:  false,
 	}
 	for _, tool := range tools {
 		for name := range want {

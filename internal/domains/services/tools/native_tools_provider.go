@@ -69,13 +69,19 @@ type nativeToolsProviderImpl struct {
 }
 
 func (p *nativeToolsProviderImpl) BuildTools(messageId, conversationId string) ([]Tool, error) {
-	tools := make([]Tool, 0, 3)
+	tools := make([]Tool, 0, 4)
 
 	fileRead := NewFileReadTool(p.workspace)
 	if err := fileRead.Init(); err != nil {
 		return nil, err
 	}
 	tools = append(tools, fileRead)
+
+	fileWrite := NewFileWriteTool(p.workspace, messageId, conversationId)
+	if err := fileWrite.Init(); err != nil {
+		return nil, err
+	}
+	tools = append(tools, fileWrite)
 
 	fileEdit := NewFileEditTool(p.workspace, messageId, conversationId)
 	if err := fileEdit.Init(); err != nil {
