@@ -20,6 +20,9 @@ var planCreatePrompt string
 //go:embed plans/plan_update
 var planUpdatePrompt string
 
+//go:embed plans/plan_mode
+var planModePrompt string
+
 //go:embed react/react_system
 var reActSystemPrompt string
 
@@ -38,6 +41,7 @@ type PromptManager struct {
 	planSystemPrompt  string
 	planCreatePrompt  string
 	planUpdatePrompt  string
+	planModePrompt    string
 	reActSystemPrompt string
 	executionPrompt   string
 	summarizePrompt   string
@@ -55,6 +59,7 @@ func init() {
 			planSystemPrompt:  planSystemPrompt,
 			planCreatePrompt:  planCreatePrompt,
 			planUpdatePrompt:  planUpdatePrompt,
+			planModePrompt:    planModePrompt,
 			reActSystemPrompt: reActSystemPrompt,
 			executionPrompt:   executionPrompt,
 			summarizePrompt:   summarizePrompt,
@@ -116,4 +121,10 @@ func GetSRESystemPrompt() string {
 	pm.Lock()
 	defer pm.Unlock()
 	return pm.sreSystemPrompt
+}
+
+func GetPlanModePrompt() string {
+	pm.Lock()
+	defer pm.Unlock()
+	return pm.planModePrompt
 }

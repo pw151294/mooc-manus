@@ -17,7 +17,7 @@ func invokeFileEdit(t *testing.T, tool Tool, args map[string]any) (string, any, 
 
 func newFileEditTool(t *testing.T, messageId string) (Tool, *NativeWorkspace) {
 	ws := NewNativeWorkspace(t.TempDir(), nil, 0)
-	tool := NewFileEditTool(ws, messageId)
+	tool := NewFileEditTool(ws, messageId, "")
 	if err := tool.Init(); err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}

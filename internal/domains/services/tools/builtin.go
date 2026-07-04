@@ -39,10 +39,11 @@ func SkillTools(
 // NativeTools 返回 NATIVE 内置工具实例切片（fileRead + fileEdit + bashExec）
 // 与 SkillTools 平级，封装 provider.BuildTools 调用语法
 // provider 为 nil 时返回 (nil, nil)，调用方无需自行判空
-// messageId 用于 fileEdit 隔离 workspace 子目录、bashExec audit 关联
-func NativeTools(provider NativeToolsProvider, messageId string) ([]Tool, error) {
+// messageId 用于 fileEdit 隔离临时 workspace 子目录、bashExec audit 关联
+// conversationId 用于 fileEdit persistent=true 时定位持久化规划目录
+func NativeTools(provider NativeToolsProvider, messageId, conversationId string) ([]Tool, error) {
 	if provider == nil {
 		return nil, nil
 	}
-	return provider.BuildTools(messageId)
+	return provider.BuildTools(messageId, conversationId)
 }

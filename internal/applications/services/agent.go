@@ -3,11 +3,15 @@ package services
 import (
 	"mooc-manus/internal/applications/dtos"
 	"mooc-manus/internal/domains/models/events"
+	"mooc-manus/internal/domains/models/prompts"
 	"mooc-manus/internal/domains/services/agents"
 	"mooc-manus/internal/domains/services/tools"
 	"mooc-manus/internal/infra/external/sse"
 	"mooc-manus/pkg/logger"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/google/uuid"
@@ -22,8 +26,8 @@ type BaseAgentApplicationService interface {
 
 type BaseAgentApplicationServiceImpl struct {
 	agentDomainSvc      agents.BaseAgentDomainService
-	skillExecutor       tools.SkillExecutor         // 用于 SSE 流结束时清理 skill 容器（D7=A）
-	nativeToolsProvider tools.NativeToolsProvider   // 用于 SSE 流结束时清理 NATIVE workspace 目录
+	skillExecutor       tools.SkillExecutor       // 用于 SSE 流结束时清理 skill 容器（D7=A）
+	nativeToolsProvider tools.NativeToolsProvider // 用于 SSE 流结束时清理 NATIVE workspace 目录
 }
 
 func NewBaseAgentApplicationService(
@@ -68,6 +72,28 @@ func (s *BaseAgentApplicationServiceImpl) Chat(clientRequest dtos.ChatClientRequ
 		logger.Info("start new conversation", zap.String("conversationId", clientRequest.ConversationId))
 	}
 	request := dtos.ConvertChatClientRequest2Request(clientRequest)
+
+	// PlanMode：注入规划提示词 + 断点续跑自动恢复
+	if clientRequest.PlanMode && s.nativeToolsProvider != nil {
+		planDir := s.nativeToolsProvider.ConversationPlanDir(clientRequest.ConversationId)
+		planPrompt := strings.ReplaceAll(prompts.GetPlanModePrompt(), "{{PLAN_DIR}}", planDir)
+		request.SystemPrompt = request.SystemPrompt + "\n\n" + planPrompt
+		logger.Info("plan mode enabled, injected plan mode prompt",
+			zap.String("conversationId", clientRequest.ConversationId),
+			zap.String("planDir", planDir),
+		)
+		// 断点续跑：若 Plan.md 已存在则自动读取注入历史规划
+		planPath := filepath.Join(planDir, "Plan.md")
+		if content, err := os.ReadFile(planPath); err == nil && len(content) > 0 {
+			request.SystemPrompt += "\n\n【历史任务规划（自动恢复）】\n以下是上次会话中已创建的任务规划，请基于此规划继续执行剩余未完成的步骤：\n" + string(content)
+			logger.Info("plan mode: found existing Plan.md, injected for resume",
+				zap.String("conversationId", clientRequest.ConversationId),
+				zap.String("planPath", planPath),
+				zap.Int("planBytes", len(content)),
+			)
+		}
+	}
+
 	messageId := sse.StartChat(writer)
 	request.MessageId = messageId // 注入 messageId 到 domain 层，用于 Skill 容器隔离
 	logger.Info("start new chat", zap.String("messageId", messageId))

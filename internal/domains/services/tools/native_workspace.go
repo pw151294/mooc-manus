@@ -96,6 +96,7 @@ func (w *NativeWorkspace) ResolveInWorkspace(messageId, relPath string) (string,
 
 // Cleanup 删除指定 messageId 关联的整个工作目录
 // messageId 为空时为 no-op；目录不存在时静默返回
+// 注意：仅清理 messageId 临时目录，不触碰 plans/ 持久化目录
 func (w *NativeWorkspace) Cleanup(messageId string) error {
 	if messageId == "" {
 		return nil
@@ -128,6 +129,39 @@ func (w *NativeWorkspace) IsSensitivePath(absPath string) bool {
 		}
 	}
 	return false
+}
+
+// ConversationPlanDir 返回 conversationId 对应的持久化规划目录路径
+// 目录布局：${baseDir}/plans/${conversationId}/
+// 该目录不参与 Cleanup，跨 session 存活，用于 Plan.md / TODO.md 等规划文件的持久化
+func (w *NativeWorkspace) ConversationPlanDir(conversationId string) string {
+	if conversationId == "" {
+		return ""
+	}
+	return filepath.Join(w.baseDir, "plans", conversationId)
+}
+
+// EnsureConversationPlanDir 按需创建持久化规划目录
+// 已存在时无副作用；conversationId 为空时返回错误
+func (w *NativeWorkspace) EnsureConversationPlanDir(conversationId string) (string, error) {
+	if conversationId == "" {
+		return "", fmt.Errorf("conversationId is empty")
+	}
+	dir := w.ConversationPlanDir(conversationId)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return "", fmt.Errorf("mkdir plan dir failed: %w", err)
+	}
+	return dir, nil
+}
+
+// ResolveInConversationPlanDir 把 relPath 安全地拼到 conversationId 持久化规划目录上
+// 复用 safeJoin（拒绝 ../ 与绝对路径）；若目录不存在会先创建
+func (w *NativeWorkspace) ResolveInConversationPlanDir(conversationId, relPath string) (string, error) {
+	root, err := w.EnsureConversationPlanDir(conversationId)
+	if err != nil {
+		return "", err
+	}
+	return safeJoin(root, relPath)
 }
 
 // expandHome 把 ~ 或 ~/xxx 展开为 $HOME/xxx
