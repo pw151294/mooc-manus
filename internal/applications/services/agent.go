@@ -9,8 +9,6 @@ import (
 	"mooc-manus/internal/infra/external/sse"
 	"mooc-manus/pkg/logger"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 
@@ -82,16 +80,6 @@ func (s *BaseAgentApplicationServiceImpl) Chat(clientRequest dtos.ChatClientRequ
 			zap.String("conversationId", clientRequest.ConversationId),
 			zap.String("planDir", planDir),
 		)
-		// 断点续跑：若 Plan.md 已存在则自动读取注入历史规划
-		planPath := filepath.Join(planDir, "Plan.md")
-		if content, err := os.ReadFile(planPath); err == nil && len(content) > 0 {
-			request.SystemPrompt += "\n\n【历史任务规划（自动恢复）】\n以下是上次会话中已创建的任务规划，请基于此规划继续执行剩余未完成的步骤：\n" + string(content)
-			logger.Info("plan mode: found existing Plan.md, injected for resume",
-				zap.String("conversationId", clientRequest.ConversationId),
-				zap.String("planPath", planPath),
-				zap.Int("planBytes", len(content)),
-			)
-		}
 	}
 
 	messageId := sse.StartChat(writer)
