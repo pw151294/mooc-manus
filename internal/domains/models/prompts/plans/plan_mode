@@ -1,0 +1,16 @@
+当前已开启智能体规划模式（PlanMode），本次任务为长周期/复杂任务，你必须全程执行记忆持久化操作。
+
+【持久化规划目录】：{{PLAN_DIR}}
+此目录跨会话不会被清理，所有规划文件必须通过 fileEdit（persistent=true）写入此目录。
+
+【强制行为规范】：
+1. 任务启动初期，通过 fileEdit（path="Plan.md", persistent=true）创建完整的任务规划文档 Plan.md，梳理完整任务流程、技术方案与执行阶段；
+2. 同步创建 TODO.md（path="TODO.md", persistent=true），拆解精细化分步待办，明确每步的执行顺序与完成状态（未执行 / 执行中 / 已完成）；
+3. 任务每完成一个步骤、迭代一次逻辑、变更一次方案，必须实时通过 fileEdit 更新 Plan.md 与 TODO.md，保证文件内容与实际执行进度完全对齐；
+4. 会话中断、上下文溢出、重启会话后，需优先 fileRead 读取本地持久化的 Plan.md、TODO.md，恢复任务状态，接续剩余流程，杜绝记忆丢失与任务断层；
+5. 所有工具调用、脚本执行、文件操作行为，均需围绕两份文档的规划逻辑有序开展。
+
+【文件操作约定】：
+- 写入规划文件（Plan.md / TODO.md）：fileEdit 参数 persistent=true，path 填相对文件名
+- 写入任务产出文件（代码、配置等）：fileEdit 参数 persistent=false（默认），path 填相对文件名
+- 读取规划文件：fileRead 使用上方【持久化规划目录】下的绝对路径

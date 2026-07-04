@@ -14,13 +14,18 @@ import (
 // 与 SkillExecutor 平级，作为 BaseAgentDomainService 的单一依赖
 // 详细契约见 .harness/rules/49-native-builtin.md
 type NativeToolsProvider interface {
-	// BuildTools 按 messageId 构造一组工具实例（fileRead + fileEdit + bashExec）
-	// messageId 用于 fileEdit 隔离 workspace 子目录、bashExec audit 关联
-	BuildTools(messageId string) ([]Tool, error)
+	// BuildTools 按 messageId + conversationId 构造一组工具实例（fileRead + fileEdit + bashExec）
+	// messageId 用于 fileEdit 隔离临时 workspace 子目录、bashExec audit 关联
+	// conversationId 用于 fileEdit persistent=true 时定位持久化规划目录
+	BuildTools(messageId, conversationId string) ([]Tool, error)
 
-	// Cleanup 清理 messageId 关联的 workspace 目录；messageId 为空时 no-op
+	// Cleanup 清理 messageId 关联的临时 workspace 目录；messageId 为空时 no-op
+	// 注意：不清理 conversationId 对应的持久化规划目录
 	// 与 SSE 流生命周期对齐，由 application 层在 defer 路径中触发
 	Cleanup(messageId string) error
+
+	// ConversationPlanDir 返回 conversationId 对应的持久化规划目录路径（不在 Cleanup 时删除）
+	ConversationPlanDir(conversationId string) string
 }
 
 // NewNativeToolsProvider 单例装配 NativeToolsProvider
@@ -63,7 +68,7 @@ type nativeToolsProviderImpl struct {
 	bashConcurrency       int
 }
 
-func (p *nativeToolsProviderImpl) BuildTools(messageId string) ([]Tool, error) {
+func (p *nativeToolsProviderImpl) BuildTools(messageId, conversationId string) ([]Tool, error) {
 	tools := make([]Tool, 0, 3)
 
 	fileRead := NewFileReadTool(p.workspace)
@@ -72,7 +77,7 @@ func (p *nativeToolsProviderImpl) BuildTools(messageId string) ([]Tool, error) {
 	}
 	tools = append(tools, fileRead)
 
-	fileEdit := NewFileEditTool(p.workspace, messageId)
+	fileEdit := NewFileEditTool(p.workspace, messageId, conversationId)
 	if err := fileEdit.Init(); err != nil {
 		return nil, err
 	}
@@ -92,6 +97,10 @@ func (p *nativeToolsProviderImpl) BuildTools(messageId string) ([]Tool, error) {
 	tools = append(tools, bashExec)
 
 	return tools, nil
+}
+
+func (p *nativeToolsProviderImpl) ConversationPlanDir(conversationId string) string {
+	return p.workspace.ConversationPlanDir(conversationId)
 }
 
 func (p *nativeToolsProviderImpl) Cleanup(messageId string) error {

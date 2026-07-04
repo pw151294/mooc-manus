@@ -22,6 +22,7 @@ type ChatClientRequest struct {
 	ProviderIds    []string      `json:"providerIds"`
 	SkillRefs      []SkillRef    `json:"skillRefs"`
 	Files          []interface{} `json:"file"`
+	PlanMode       bool          `json:"planMode"`
 }
 
 type AgentPlanCreateClientRequest struct {
@@ -61,6 +62,7 @@ func ConvertChatClientRequest2Request(clientRequest ChatClientRequest) agents.Ch
 	request.FunctionIds = clientRequest.FunctionIds
 	request.ProviderIds = clientRequest.ProviderIds
 	request.Files = convertInterfaces2Files(clientRequest.Files)
+	request.PlanMode = clientRequest.PlanMode
 	// 转换 SkillRefs
 	skillRefs := make([]agents.SkillRef, 0, len(clientRequest.SkillRefs))
 	for _, ref := range clientRequest.SkillRefs {

@@ -20,17 +20,20 @@ const (
 	FileEditFunctionDesc = "在 workspace 内对文件做精确字符串替换。要求 old_string 在文件内唯一（除非 replace_all=true）；非唯一时返回前 3 个匹配的行号，请把 old_string 扩展到唯一上下文后重试。写入路径必须落在当前消息的 workspace 目录内。"
 )
 
-// FileEditTool fileEdit 内置工具：string-replace 风格，写入仅限 workspace
+// FileEditTool fileEdit 内置工具：string-replace 风格
+// persistent=false（默认）写入 ${messageId} 临时工作区；persistent=true 写入持久化规划目录
 type FileEditTool struct {
 	BaseTool
-	workspace *NativeWorkspace
-	messageId string // T0：application 层透传，与 SSE 流绑定，决定 workspace 子目录
+	workspace      *NativeWorkspace
+	messageId      string // 与 SSE 流绑定，决定临时 workspace 子目录
+	conversationId string // 用于 persistent=true 时定位持久化规划目录
 }
 
 // NewFileEditTool 构造 FileEditTool
 // messageId 在 application 层注入，用于隔离不同消息的工作区
-func NewFileEditTool(workspace *NativeWorkspace, messageId string) Tool {
-	return &FileEditTool{workspace: workspace, messageId: messageId}
+// conversationId 用于 persistent=true 时写入跨 session 的持久化规划目录
+func NewFileEditTool(workspace *NativeWorkspace, messageId, conversationId string) Tool {
+	return &FileEditTool{workspace: workspace, messageId: messageId, conversationId: conversationId}
 }
 
 func (t *FileEditTool) Init() error {
@@ -47,7 +50,7 @@ func (t *FileEditTool) Init() error {
 				"properties": map[string]any{
 					"path": map[string]any{
 						"type":        "string",
-						"description": "相对当前消息 workspace 根目录的文件路径；不允许 ../ 或绝对路径",
+						"description": "相对根目录的文件路径；不允许 ../ 或绝对路径。persistent=false 时相对当前消息 workspace，persistent=true 时相对持久化规划目录",
 					},
 					"old_string": map[string]any{
 						"type":        "string",
@@ -60,6 +63,10 @@ func (t *FileEditTool) Init() error {
 					"replace_all": map[string]any{
 						"type":        "boolean",
 						"description": "是否替换所有出现，默认 false",
+					},
+					"persistent": map[string]any{
+						"type":        "boolean",
+						"description": "是否写入持久化规划目录（跨 session 不清理）。Plan.md / TODO.md 等规划文件必须设为 true；代码等任务产出文件设为 false（默认）",
 					},
 				},
 				"required": []string{"path", "old_string", "new_string"},
@@ -80,6 +87,7 @@ func (t *FileEditTool) Invoke(funcName, funcArgs string) models.ToolCallResult {
 		OldString  string `json:"old_string"`
 		NewString  string `json:"new_string"`
 		ReplaceAll bool   `json:"replace_all"`
+		Persistent bool   `json:"persistent"`
 	}
 	if err := json.Unmarshal([]byte(funcArgs), &params); err != nil {
 		logger.Error("unmarshal fileEdit args failed", zap.Error(err), zap.String("func_args", funcArgs))
@@ -97,11 +105,22 @@ func (t *FileEditTool) Invoke(funcName, funcArgs string) models.ToolCallResult {
 	if t.workspace == nil {
 		return models.ToolCallResult{Success: false, Message: "Error: workspace 未初始化"}
 	}
-	if t.messageId == "" {
-		return models.ToolCallResult{Success: false, Message: "Error: messageId 未注入，无法定位 workspace"}
-	}
 
-	absPath, err := t.workspace.ResolveInWorkspace(t.messageId, params.Path)
+	var absPath string
+	var err error
+	if params.Persistent {
+		// persistent=true：写入持久化规划目录（跨 session 存活）
+		if t.conversationId == "" {
+			return models.ToolCallResult{Success: false, Message: "Error: persistent=true 时需要 conversationId，当前未注入"}
+		}
+		absPath, err = t.workspace.ResolveInConversationPlanDir(t.conversationId, params.Path)
+	} else {
+		// persistent=false（默认）：写入 messageId 临时工作区
+		if t.messageId == "" {
+			return models.ToolCallResult{Success: false, Message: "Error: messageId 未注入，无法定位 workspace"}
+		}
+		absPath, err = t.workspace.ResolveInWorkspace(t.messageId, params.Path)
+	}
 	if err != nil {
 		return models.ToolCallResult{Success: false, Message: "Error: " + err.Error()}
 	}
@@ -148,6 +167,8 @@ func (t *FileEditTool) Invoke(funcName, funcArgs string) models.ToolCallResult {
 
 	logger.Info("fileEdit success",
 		zap.String("message_id", t.messageId),
+		zap.String("conversation_id", t.conversationId),
+		zap.Bool("persistent", params.Persistent),
 		zap.String("path", absPath),
 		zap.Int("replacements", replaced),
 		zap.Bool("replace_all", params.ReplaceAll),

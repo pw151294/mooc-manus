@@ -21,6 +21,7 @@ type ChatRequest struct {
 	ProviderIds    []string
 	SkillRefs      []SkillRef
 	Files          []file.File
+	PlanMode       bool // 规划模式开关：开启后框架自动注入 PlanMode 提示词并实现记忆持久化
 }
 
 type AgentPlanCreateRequest struct {

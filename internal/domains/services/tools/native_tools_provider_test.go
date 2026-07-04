@@ -27,7 +27,7 @@ func newTestProvider(t *testing.T) NativeToolsProvider {
 
 func TestNativeToolsProvider_BuildTools(t *testing.T) {
 	p := newTestProvider(t)
-	tools, err := p.BuildTools("msg-1")
+	tools, err := p.BuildTools("msg-1", "")
 	if err != nil {
 		t.Fatalf("BuildTools failed: %v", err)
 	}
@@ -61,10 +61,10 @@ func TestNativeToolsProvider_BuildTools(t *testing.T) {
 func TestNativeToolsProvider_BuildToolsDifferentMessageIds(t *testing.T) {
 	p := newTestProvider(t)
 	// 两次不同 messageId 的 Build 都成功，且彼此互不污染
-	if _, err := p.BuildTools("msg-A"); err != nil {
+	if _, err := p.BuildTools("msg-A", ""); err != nil {
 		t.Fatalf("Build for msg-A failed: %v", err)
 	}
-	if _, err := p.BuildTools("msg-B"); err != nil {
+	if _, err := p.BuildTools("msg-B", ""); err != nil {
 		t.Fatalf("Build for msg-B failed: %v", err)
 	}
 }
@@ -107,7 +107,7 @@ func TestNativeToolsProvider_FileEditUsesProviderWorkspace(t *testing.T) {
 		BashOutputCap:      1024,
 		BashConcurrency:    4,
 	}, "")
-	tools, err := p.BuildTools("msg-edit")
+	tools, err := p.BuildTools("msg-edit", "")
 	if err != nil {
 		t.Fatalf("BuildTools failed: %v", err)
 	}
@@ -157,7 +157,7 @@ func TestNativeToolsProvider_WorkspaceBaseDirFallback(t *testing.T) {
 	}, storageRoot)
 
 	// 用 Cleanup 路径间接验证 provider 真的把 workspace 拼到了回退目录
-	tools, err := p.BuildTools("msg-fb")
+	tools, err := p.BuildTools("msg-fb", "")
 	if err != nil {
 		t.Fatalf("BuildTools failed: %v", err)
 	}
