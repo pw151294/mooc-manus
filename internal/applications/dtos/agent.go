@@ -41,6 +41,44 @@ type AgentPlanUpdateClientRequest struct {
 	StepId         string `json:"stepId"`
 }
 
+// StopMessageClientRequest 终止单条流式消息的请求
+type StopMessageClientRequest struct {
+	MessageId string `json:"messageId" binding:"required"`
+}
+
+// StopConversationClientRequest 终止整个会话的请求
+type StopConversationClientRequest struct {
+	ConversationId string `json:"conversationId" binding:"required"`
+}
+
+// StopMessageResult StopMessage 接口响应
+// Cleaned 明细记录每一类资源的回收结果，方便前端展示与排障
+type StopMessageResult struct {
+	MessageId string                 `json:"messageId"`
+	Cleaned   StopMessageCleanDetail `json:"cleaned"`
+}
+
+// StopMessageCleanDetail 单条消息资源回收明细
+// sse=true 表示 CloseChat 前该 messageId 仍是活跃连接（本次真正切断）
+// skill / nativeWorkspace 是"清理动作是否成功"，任一失败仅日志告警不影响 200 返回
+type StopMessageCleanDetail struct {
+	SSE             bool `json:"sse"`
+	Skill           bool `json:"skill"`
+	NativeWorkspace bool `json:"nativeWorkspace"`
+}
+
+// StopConversationResult StopConversation 接口响应
+// Messages 列出本次被清理的活跃 messageId（顺序不保证）
+type StopConversationResult struct {
+	ConversationId string                      `json:"conversationId"`
+	Cleaned        StopConversationCleanDetail `json:"cleaned"`
+}
+
+type StopConversationCleanDetail struct {
+	Memory   bool     `json:"memory"`
+	Messages []string `json:"messages"`
+}
+
 func convertInterfaces2Files(datas []interface{}) []file.File {
 	files := make([]file.File, 0, len(datas))
 	for _, data := range datas {

@@ -3,6 +3,7 @@ package services
 import (
 	"mooc-manus/internal/applications/dtos"
 	"mooc-manus/internal/domains/models/events"
+	"mooc-manus/internal/domains/models/memory"
 	"mooc-manus/internal/domains/models/prompts"
 	"mooc-manus/internal/domains/services/agents"
 	"mooc-manus/internal/domains/services/tools"
@@ -20,6 +21,8 @@ type BaseAgentApplicationService interface {
 	Chat(dtos.ChatClientRequest, http.ResponseWriter)
 	CreatePlan(dtos.AgentPlanCreateClientRequest, http.ResponseWriter)
 	UpdatePlan(dtos.AgentPlanUpdateClientRequest, http.ResponseWriter)
+	StopMessage(messageId string) dtos.StopMessageResult
+	StopConversation(conversationId string) dtos.StopConversationResult
 }
 
 type BaseAgentApplicationServiceImpl struct {
@@ -82,7 +85,7 @@ func (s *BaseAgentApplicationServiceImpl) Chat(clientRequest dtos.ChatClientRequ
 		)
 	}
 
-	messageId := sse.StartChat(writer)
+	messageId := sse.StartChat(writer, clientRequest.ConversationId)
 	request.MessageId = messageId // 注入 messageId 到 domain 层，用于 Skill 容器隔离
 	logger.Info("start new chat", zap.String("messageId", messageId))
 	defer func() {
@@ -110,7 +113,7 @@ func (s *BaseAgentApplicationServiceImpl) CreatePlan(clientRequest dtos.AgentPla
 	logger.Info("start new conversation", zap.String("conversationId", clientRequest.ConversationId))
 
 	request := dtos.ConvertPlanCreateClientRequest2DORequest(clientRequest)
-	messageId := sse.StartChat(writer)
+	messageId := sse.StartChat(writer, clientRequest.ConversationId)
 	request.MessageId = messageId // 注入 messageId 到 domain 层，用于 Skill 容器隔离
 	logger.Info("start create plans", zap.String("messageId", messageId))
 	defer func() {
@@ -154,7 +157,7 @@ func (s *BaseAgentApplicationServiceImpl) UpdatePlan(clientRequest dtos.AgentPla
 	logger.Info("start new conversation", zap.String("conversationId", clientRequest.ConversationId))
 
 	request := dtos.ConvertPlanUpdateClientRequest2DORequest(clientRequest)
-	messageId := sse.StartChat(writer)
+	messageId := sse.StartChat(writer, clientRequest.ConversationId)
 	request.MessageId = messageId // 注入 messageId 到 domain 层，用于 Skill 容器隔离
 	logger.Info("start update plans", zap.String("messageId", messageId))
 	defer func() {
@@ -190,4 +193,87 @@ func (s *BaseAgentApplicationServiceImpl) UpdatePlan(clientRequest dtos.AgentPla
 		}
 		sse.SendEvent(event, messageId)
 	}
+}
+
+// stopMessageInternal 终止单条 messageId 关联的运行时资源
+// 三段清理彼此独立，单个失败仅告警，不阻塞剩余步骤
+// sse=true 当且仅当调用时该 messageId 仍是活跃 SSE 连接（本次真正切断）
+func (s *BaseAgentApplicationServiceImpl) stopMessageInternal(messageId string) dtos.StopMessageCleanDetail {
+	detail := dtos.StopMessageCleanDetail{}
+	if messageId == "" {
+		return detail
+	}
+
+	// 1) SSE：先判断存在性再关闭；HasMessage 与 CloseChat 各自持锁，短时窗内并发也无害（CloseChat 幂等）
+	if sse.HasMessage(messageId) {
+		sse.CloseChat(messageId)
+		detail.SSE = true
+	}
+
+	// 2) Skill 容器与 skills 目录
+	if s.skillExecutor != nil {
+		if err := s.skillExecutor.CleanupMessage(messageId); err != nil {
+			logger.Warn("stop message: cleanup skill failed",
+				zap.String("messageId", messageId), zap.Error(err))
+		} else {
+			detail.Skill = true
+		}
+	}
+
+	// 3) NATIVE workspace
+	if s.nativeToolsProvider != nil {
+		if err := s.nativeToolsProvider.Cleanup(messageId); err != nil {
+			logger.Warn("stop message: cleanup native workspace failed",
+				zap.String("messageId", messageId), zap.Error(err))
+		} else {
+			detail.NativeWorkspace = true
+		}
+	}
+
+	return detail
+}
+
+// StopMessage 终止指定 messageId 的流式对话
+// 幂等：messageId 未知时返回 cleaned 全 false 的 200 响应
+func (s *BaseAgentApplicationServiceImpl) StopMessage(messageId string) dtos.StopMessageResult {
+	logger.Info("stop message requested", zap.String("messageId", messageId))
+	detail := s.stopMessageInternal(messageId)
+	logger.Info("stop message completed",
+		zap.String("messageId", messageId),
+		zap.Any("cleaned", detail))
+	return dtos.StopMessageResult{
+		MessageId: messageId,
+		Cleaned:   detail,
+	}
+}
+
+// StopConversation 终止整个会话的运行时资源
+// 步骤：SSE manager 拿活跃 messageIds → 逐个走 stopMessageInternal → 删 chat memory
+// 不清 planDir：与 PlanMode 断点续跑语义一致
+func (s *BaseAgentApplicationServiceImpl) StopConversation(conversationId string) dtos.StopConversationResult {
+	logger.Info("stop conversation requested", zap.String("conversationId", conversationId))
+	result := dtos.StopConversationResult{
+		ConversationId: conversationId,
+		Cleaned:        dtos.StopConversationCleanDetail{Messages: []string{}},
+	}
+	if conversationId == "" {
+		return result
+	}
+
+	messageIds := sse.MessageIdsOf(conversationId)
+	for _, mid := range messageIds {
+		s.stopMessageInternal(mid)
+		result.Cleaned.Messages = append(result.Cleaned.Messages, mid)
+	}
+
+	// memory.DeleteMemory 内部对 conversationId 不存在场景 no-op
+	// 这里通过 goroutine-safe 的方式：deleted 语义上代表"至少调用过一次删除"，
+	// 目前实现没暴露"是否真的删过"的返回值，先按 true 上报；如需精确可下钻改 Memory API
+	memory.DeleteMemory(conversationId)
+	result.Cleaned.Memory = true
+
+	logger.Info("stop conversation completed",
+		zap.String("conversationId", conversationId),
+		zap.Int("messages", len(messageIds)))
+	return result
 }

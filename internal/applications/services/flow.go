@@ -31,7 +31,7 @@ func (s *BaseFlowApplicationServiceImpl) Run(clientRequest dtos.ChatClientReques
 		logger.Info("start new flow run", zap.String("conversationId", clientRequest.ConversationId))
 	}
 	request := dtos.ConvertChatClientRequest2Request(clientRequest)
-	messageId := sse.StartChat(writer)
+	messageId := sse.StartChat(writer, clientRequest.ConversationId)
 	logger.Info("start flow run instance", zap.String("messageId", messageId))
 	defer func() {
 		logger.Info("stop flow run instance", zap.String("messageId", messageId))

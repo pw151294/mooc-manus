@@ -191,6 +191,8 @@ func InitRouter() *gin.Engine {
 		agent.POST("/a2a/chat", agentHandler.A2AChat)
 		agent.POST("/plan/create", agentHandler.CreatePlan)
 		agent.POST("/plan/update", agentHandler.UpdatePlan)
+		agent.POST("/message/stop", agentHandler.StopMessage)
+		agent.POST("/conversation/stop", agentHandler.StopConversation)
 	}
 
 	flow := r.Group("/api/flow")

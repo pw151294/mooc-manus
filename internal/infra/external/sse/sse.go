@@ -6,6 +6,7 @@ import (
 	"mooc-manus/pkg/logger"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.uber.org/zap"
@@ -16,6 +17,7 @@ type EventHandleProtocol struct {
 	timeout time.Duration
 	writer  http.ResponseWriter
 	flusher http.Flusher
+	aborted atomic.Bool
 	sync.Mutex
 }
 
@@ -40,11 +42,26 @@ func NewEventHandleProtocol(w http.ResponseWriter, timeout time.Duration) *Event
 	}
 }
 
+// Aborted 返回连接是否已被主动中止（StopMessage / StopConversation 触发）
+func (s *EventHandleProtocol) Aborted() bool {
+	return s.aborted.Load()
+}
+
 // SendEvent sends a structured event with a name and data object to the client.
 // This mimics Java's sseEmitter.send(SseEmitter.event().name(eventName).data(data))
 func (s *EventHandleProtocol) SendEvent(eventName string, data interface{}) {
+	// Aborted 后 drop 掉后续事件，避免向已断开的 ResponseWriter 写导致 broken pipe
+	if s.aborted.Load() {
+		return
+	}
+
 	s.Lock()
 	defer s.Unlock()
+
+	// 加锁后再校验一次，避免 Abort 与 SendEvent 竞态
+	if s.aborted.Load() {
+		return
+	}
 
 	// Marshal data to JSON
 	jsonData, err := json.Marshal(data)
@@ -72,9 +89,12 @@ func (s *EventHandleProtocol) SendEvent(eventName string, data interface{}) {
 	s.flusher.Flush()
 }
 
-// Close closes the SSE connection.
+// Close 标记连接已中止；后续 SendEvent 会被 drop
+// 与 CloseChat 配合，用于 StopMessage / StopConversation 主动切断出口
 func (s *EventHandleProtocol) Close() {
-	logger.Info("SSE connection closed")
+	if s.aborted.CompareAndSwap(false, true) {
+		logger.Info("SSE connection closed")
+	}
 }
 
 // Error sends an error message and closes the connection.

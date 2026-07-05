@@ -31,7 +31,7 @@ func (s *A2AApplicationServiceImpl) A2AChat(clientRequest dtos.ChatClientRequest
 		clientRequest.ConversationId = uuid.New().String()
 	}
 	request := dtos.ConvertChatClientRequest2Request(clientRequest)
-	messageId := sse.StartChat(writer)
+	messageId := sse.StartChat(writer, clientRequest.ConversationId)
 	logger.Info("start new  a2a chat", zap.String("messageId", messageId))
 	defer func() {
 		sse.CloseChat(messageId)

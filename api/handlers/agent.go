@@ -57,3 +57,23 @@ func (h *AgentHandler) UpdatePlan(c *gin.Context) {
 	}
 	h.baseAgentAppSvc.UpdatePlan(clientRequest, c.Writer)
 }
+
+func (h *AgentHandler) StopMessage(c *gin.Context) {
+	clientRequest := dtos.StopMessageClientRequest{}
+	if err := c.ShouldBindJSON(&clientRequest); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	result := h.baseAgentAppSvc.StopMessage(clientRequest.MessageId)
+	c.JSON(http.StatusOK, result)
+}
+
+func (h *AgentHandler) StopConversation(c *gin.Context) {
+	clientRequest := dtos.StopConversationClientRequest{}
+	if err := c.ShouldBindJSON(&clientRequest); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	result := h.baseAgentAppSvc.StopConversation(clientRequest.ConversationId)
+	c.JSON(http.StatusOK, result)
+}
