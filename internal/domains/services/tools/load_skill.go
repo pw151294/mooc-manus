@@ -9,6 +9,7 @@ import (
 	"mooc-manus/internal/applications/dtos"
 	"mooc-manus/internal/domains/models"
 	"mooc-manus/internal/domains/models/agents"
+	"mooc-manus/internal/domains/services/tools/error_recovery"
 	"mooc-manus/internal/infra/external/file_storage"
 	"mooc-manus/internal/infra/repositories"
 	"mooc-manus/pkg/logger"
@@ -103,6 +104,18 @@ func (t *LoadSkillTool) Invoke(funcName, funcArgs string) models.ToolCallResult 
 	// 2. skillName 空检查
 	if params.SkillName == "" {
 		return models.ToolCallResult{Success: false, Message: "Error: skillName parameter is required"}
+	}
+
+	// 2.5 内置错误恢复 Skill 短路:直接返回 embed 内容,不查 DB/OSS
+	if error_recovery.IsBuiltInSkill(params.SkillName) {
+		if filepath != LoadSkillDefaultFile {
+			return models.ToolCallResult{
+				Success: false,
+				Message: fmt.Sprintf("Error: 内置 Skill %s 仅提供 SKILL.md,不支持额外文件 %s", params.SkillName, filepath),
+			}
+		}
+		logger.Info("loadSkill served from embed builtin", zap.String("skill_name", params.SkillName))
+		return models.ToolCallResult{Success: true, Data: error_recovery.SkillMD()}
 	}
 
 	// 3. 按 SkillName 查找 Skill

@@ -12,6 +12,7 @@ import (
 	"mooc-manus/internal/applications/dtos"
 	"mooc-manus/internal/domains/models"
 	"mooc-manus/internal/domains/models/agents"
+	"mooc-manus/internal/domains/services/tools/error_recovery"
 	"mooc-manus/internal/infra/external/file_storage"
 	"mooc-manus/internal/infra/repositories"
 	"mooc-manus/pkg/logger"
@@ -113,6 +114,14 @@ func (t *ExecuteSkillTool) Invoke(funcName, funcArgs string) models.ToolCallResu
 	}
 	if params.Bash == "" {
 		return models.ToolCallResult{Success: false, Message: "Error: bash parameter is required"}
+	}
+
+	// 步骤 2.5:内置错误恢复 Skill 无可执行脚本,拒绝 executeSkill 调用
+	if error_recovery.IsBuiltInSkill(params.SkillName) {
+		return models.ToolCallResult{
+			Success: false,
+			Message: fmt.Sprintf("Error: %s 无可执行脚本,请按 SKILL.md 指导继续常规工具调用(fileRead/fileWrite/fileEdit/bashExec),不要 executeSkill 本内置 Skill", params.SkillName),
+		}
 	}
 
 	// 步骤3：从 skillRefs 中按 skillName 查找（利用新增的 SkillName 字段）

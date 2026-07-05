@@ -16,6 +16,7 @@ import (
 	"mooc-manus/internal/domains/models/llm"
 	"mooc-manus/internal/domains/models/memory"
 	"mooc-manus/internal/domains/services/tools"
+	"mooc-manus/internal/domains/services/tools/error_recovery"
 	"mooc-manus/pkg/logger"
 )
 
@@ -69,8 +70,10 @@ func (a *BaseAgent) AddToMemory(messages []llm.Message) {
 }
 
 // InvokeToolCalls 执行工具调用并采集ToolMessage 注：该方法不管在流式还是非流式的场景下都是阻塞调用的
-func (a *BaseAgent) InvokeToolCalls(toolCalls []llm.ToolCall, eventCh chan<- events.AgentEvent) []llm.Message {
+// 返回值 abort 为 true 时表示本轮工具调用命中 L3 致命故障,调用方(主循环)应立即终止链路
+func (a *BaseAgent) InvokeToolCalls(toolCalls []llm.ToolCall, eventCh chan<- events.AgentEvent) ([]llm.Message, bool) {
 	toolMessages := make([]llm.Message, 0, len(toolCalls))
+	abort := false
 	for _, toolCall := range toolCalls {
 		toolCallID := toolCall.ID
 		funcName := toolCall.Name
@@ -117,9 +120,25 @@ func (a *BaseAgent) InvokeToolCalls(toolCalls []llm.ToolCall, eventCh chan<- eve
 		eventCh <- events.OnToolCallComplete(toolCall, tool.ProviderName(), &result)
 		if !result.Success {
 			eventCh <- events.OnToolCallFail(toolCall, tool.ProviderName(), &result)
+			content := "工具调用失败：" + result.Message
+			// 4 类 NATIVE 原生工具失败时,按 error_recovery 分类追加修复模板
+			if error_recovery.Enabled() && error_recovery.IsNativeTool(funcName) {
+				decision := error_recovery.Classify(funcName, result.Message)
+				if decision.Level != error_recovery.LevelNone {
+					content = content + "\n\n" + decision.Level.Prefix() + decision.Template
+					logger.Info("error_recovery hook applied",
+						zap.String("tool", funcName),
+						zap.Int("level", int(decision.Level)),
+						zap.String("template_key", decision.TemplateKey),
+					)
+					if decision.Level == error_recovery.LevelFatal {
+						abort = true
+					}
+				}
+			}
 			toolMessages = append(toolMessages, llm.Message{
 				Role:       llm.RoleTool,
-				Content:    "工具调用失败：" + result.Message,
+				Content:    content,
 				ToolCallID: toolCallID,
 			})
 		} else {
@@ -131,22 +150,24 @@ func (a *BaseAgent) InvokeToolCalls(toolCalls []llm.ToolCall, eventCh chan<- eve
 		}
 	}
 
-	return toolMessages
+	return toolMessages, abort
 }
 
 func (a *BaseAgent) InvokeTool(tool tools.Tool, funcName, funcArgs string) models.ToolCallResult {
 	attempt := 0
+	// 保留最后一次真实 result,避免丢失原始 error 消息影响 error_recovery 分类
+	var last models.ToolCallResult
+	last.Success = false
+	last.Message = "工具调用失败"
 	for attempt < a.agentConfig.MaxRetries {
 		result := tool.Invoke(funcName, funcArgs)
 		if result.Success {
 			return result
 		}
+		last = result
 		attempt++
 	}
-	return models.ToolCallResult{
-		Success: false,
-		Message: "工具调用失败",
-	}
+	return last
 }
 
 // StreamingInvokeLLM 在一个round内调用大模型不管在流式/非流式场景下都是阻塞调用的
@@ -249,7 +270,16 @@ func (a *BaseAgent) Invoke(query string, eventCh chan events.AgentEvent) {
 			return
 		}
 		logger.Info("begin invoke tool calls", zap.Any("toolCalls", toolCalls))
-		toolMessages := a.InvokeToolCalls(toolCalls, eventCh)
+		toolMessages, abort := a.InvokeToolCalls(toolCalls, eventCh)
+
+		if abort {
+			logger.Warn("tool call chain aborted by error_recovery L3", zap.Int("round", round))
+			// 记录中断上下文进 memory,便于后续排查
+			a.AddToMemory(toolMessages)
+			eventCh <- events.OnError("原生工具触发致命故障(L3),已终止本次任务链路")
+			close(eventCh)
+			return
+		}
 
 		// 所有的工具都执行完成之后 调用LLM获取汇总消息二次提问
 		logger.Info("invoke llm", zap.Int("round", round), zap.Any("tool messages", toolMessages))
@@ -283,7 +313,14 @@ func (a *BaseAgent) StreamingInvoke(query string, eventCh chan events.AgentEvent
 				shouldEnd.CompareAndSwap(false, true)
 				return
 			}
-			messages = a.InvokeToolCalls(toolCalls, eventCh) // 这一步是阻塞调用 event直接上报给eventCh 无需监听
+			toolMsgs, abort := a.InvokeToolCalls(toolCalls, eventCh) // 这一步是阻塞调用 event直接上报给eventCh 无需监听
+			messages = toolMsgs
+			if abort {
+				logger.Warn("streaming tool call chain aborted by error_recovery L3", zap.Int("round", round))
+				a.AddToMemory(toolMsgs)
+				eventCh <- events.OnError("原生工具触发致命故障(L3),已终止本次任务链路")
+				shouldEnd.CompareAndSwap(false, true)
+			}
 		}()
 		for event := range llmEventCh {
 			eventCh <- event

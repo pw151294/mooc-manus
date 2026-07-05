@@ -10,6 +10,7 @@ import (
 	"mooc-manus/internal/domains/models/prompts/plans"
 	"mooc-manus/internal/domains/services"
 	"mooc-manus/internal/domains/services/tools"
+	"mooc-manus/internal/domains/services/tools/error_recovery"
 	"mooc-manus/internal/infra/external/file_storage"
 	llmadapter "mooc-manus/internal/infra/external/llm"
 	"mooc-manus/internal/infra/repositories"
@@ -211,15 +212,22 @@ func (s *BaseAgentDomainServiceImpl) createBaseAgent(request agents.ChatRequest)
 	}
 	logger.Info("init tools success")
 
-	// 追加 Skill 内置工具（仅在 SkillRefs 非空时）
-	if len(request.SkillRefs) > 0 {
-		skillTools, err := tools.SkillTools(s.skillRepo, s.versionRepo, s.storage, s.skillExecutor, request.SkillRefs, request.MessageId)
+	// 合并有效 SkillRefs:用户传入 + 内置错误恢复 Skill(默认注入,受 NATIVE_ERROR_RECOVERY_ENABLED 门控)
+	// 不修改 request.SkillRefs 原始数据,仅在本地副本上追加,避免影响 caller 语义
+	effectiveSkillRefs := append([]agents.SkillRef{}, request.SkillRefs...)
+	if error_recovery.Enabled() {
+		effectiveSkillRefs = append(effectiveSkillRefs, error_recovery.BuiltInSkillRef())
+	}
+
+	// 追加 Skill 内置工具(loadSkill + executeSkill),覆盖用户 Skill 与内置错误恢复 Skill
+	if len(effectiveSkillRefs) > 0 {
+		skillTools, err := tools.SkillTools(s.skillRepo, s.versionRepo, s.storage, s.skillExecutor, effectiveSkillRefs, request.MessageId)
 		if err != nil {
 			logger.Error("init skill tools failed", zap.Error(err))
 			return nil, err
 		}
 		baseTools = append(baseTools, skillTools...)
-		logger.Info("init skill tools success", zap.Int("skill_count", len(request.SkillRefs)))
+		logger.Info("init skill tools success", zap.Int("skill_count", len(effectiveSkillRefs)))
 	}
 
 	// 追加 NATIVE 内置工具（fileRead / fileEdit / bashExec）
@@ -236,17 +244,17 @@ func (s *BaseAgentDomainServiceImpl) createBaseAgent(request agents.ChatRequest)
 		logger.Info("init native tools success", zap.Int("native_count", len(nativeTools)))
 	}
 
-	// 构建系统提示词（拼接 Skill 元信息）
+	// 构建系统提示词(拼接 Skill 元信息);内置错误恢复 Skill 一并注入
 	systemPrompt := request.SystemPrompt
-	if len(request.SkillRefs) > 0 {
-		skillsPrompt, err := s.buildSkillsSystemPrompt(request.SkillRefs)
+	if len(effectiveSkillRefs) > 0 {
+		skillsPrompt, err := s.buildSkillsSystemPrompt(effectiveSkillRefs)
 		if err != nil {
 			logger.Warn("build skills system prompt failed", zap.Error(err))
 			// 失败时仍可继续，但记录警告
 		} else if skillsPrompt != "" {
 			// 拼接顺序：原 systemPrompt + "\n\n" + skillsPrompt（对齐 Beedance BaseAgent.java:863-864）
 			systemPrompt = systemPrompt + "\n\n" + skillsPrompt
-			logger.Info("skills system prompt injected", zap.Int("skill_count", len(request.SkillRefs)))
+			logger.Info("skills system prompt injected", zap.Int("skill_count", len(effectiveSkillRefs)))
 		}
 	}
 
@@ -271,42 +279,53 @@ const skillUsageRules = `
 
 // buildSkillsSystemPrompt 构建 Skill 相关系统提示词段落
 // 参考 Beedance BaseAgent.buildSkillsPromptSection (BaseAgent.java:881-912)
+// 内置错误恢复 Skill 单独走 embed,不查 DB;其余 Skill 通过 skillRepo.GetByNames 批量拉描述
 func (s *BaseAgentDomainServiceImpl) buildSkillsSystemPrompt(skillRefs []agents.SkillRef) (string, error) {
 	if len(skillRefs) == 0 {
 		return "", nil
 	}
 
-	// 从 SkillRef 中提取 skillName
-	skillNames := make([]string, 0, len(skillRefs))
+	// 分离内置 Skill 与用户 Skill:内置 Skill 描述来自 embed,不查 DB
+	userSkillNames := make([]string, 0, len(skillRefs))
+	hasBuiltIn := false
 	for _, ref := range skillRefs {
-		if ref.SkillName != "" {
-			skillNames = append(skillNames, ref.SkillName)
+		if ref.SkillName == "" {
+			continue
 		}
+		if error_recovery.IsBuiltInSkill(ref.SkillName) {
+			hasBuiltIn = true
+			continue
+		}
+		userSkillNames = append(userSkillNames, ref.SkillName)
 	}
 
-	if len(skillNames) == 0 {
-		return "", nil
-	}
-
-	// 批量查询 Skill 信息
-	skillPOs, err := s.skillRepo.GetByNames(skillNames)
-	if err != nil {
-		return "", fmt.Errorf("query skills by names failed: %w", err)
-	}
-
-	if len(skillPOs) == 0 {
-		logger.Warn("no skills found for provided skillNames", zap.Strings("skill_names", skillNames))
-		return "", nil
-	}
-
-	// 拼接 Skill 列表（格式：- **{skillName}**: {description}）
 	var skillListBuilder strings.Builder
-	for _, po := range skillPOs {
-		skillListBuilder.WriteString(fmt.Sprintf("- **%s**", po.SkillName))
-		if po.Description != "" {
-			skillListBuilder.WriteString(fmt.Sprintf(": %s", po.Description))
+
+	// 用户 Skill 段:批量查询 DB
+	if len(userSkillNames) > 0 {
+		skillPOs, err := s.skillRepo.GetByNames(userSkillNames)
+		if err != nil {
+			return "", fmt.Errorf("query skills by names failed: %w", err)
 		}
-		skillListBuilder.WriteString("\n")
+		if len(skillPOs) == 0 {
+			logger.Warn("no skills found for provided skillNames", zap.Strings("skill_names", userSkillNames))
+		}
+		for _, po := range skillPOs {
+			skillListBuilder.WriteString(fmt.Sprintf("- **%s**", po.SkillName))
+			if po.Description != "" {
+				skillListBuilder.WriteString(fmt.Sprintf(": %s", po.Description))
+			}
+			skillListBuilder.WriteString("\n")
+		}
+	}
+
+	// 内置错误恢复 Skill 段:直接从 embed 取描述
+	if hasBuiltIn {
+		skillListBuilder.WriteString(fmt.Sprintf("- **%s**: %s\n", error_recovery.SkillName(), error_recovery.SkillDescription()))
+	}
+
+	if skillListBuilder.Len() == 0 {
+		return "", nil
 	}
 
 	// 拼接最终段落（对齐 Beedance BaseAgent.java:906-911）

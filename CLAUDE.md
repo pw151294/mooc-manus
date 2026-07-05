@@ -46,6 +46,7 @@
 - 🔴 **ChatMemory 生命周期与隔离** (`rules/47-memory-boundaries.md`) — `ChatMemory` 保存单一 conversation 的 LLM 对话历史（参考 `internal/domains/models/memory/memory.go` 与 `manager.go`）。所有访问统一走 `memory.
 - 🔴 **Skill 挂载与执行（DockerSkillExecutor）** (`rules/48-skill-executor.md`) — Skill 的执行流程：`ExecuteSkillTool.Invoke` 把 `SkillFiles` 下载到挂载源 → `DockerSkillExecutor` 创建容器（一次性或池化）→ 注入 bash 脚本执行 → 把 outpu
 - 🟠 **NATIVE 内置工具（fileRead / fileEdit / bashExec）** (`rules/49-native-builtin.md`) — manus 2026-06-29 引入第四类工具 **NATIVE 内置工具**，对齐 openclaw / Claude Code / Codex 编程 agent 的原生本地能力：直接读取宿主机文件、对工作区文件做精确字符串替换、在项目
+- 🟠 **NATIVE 工具错误恢复(三级分层策略)** (`rules/50-native-error-recovery.md`) — manus 2026-07-05 引入 4 类原生工具的**错误恢复 Skill 与平台拦截 Hook**,解决过去"工具失败全丢给 LLM 自行推理"导致的无脑重试、任务卡死问题。规则正文见 `internal/domains/servi
 <!-- HARNESS-GENERATED-END -->
 
 ---
