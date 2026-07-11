@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"context"
 	"fmt"
 	"mooc-manus/internal/domains/models"
 	"mooc-manus/internal/domains/models/agents"
@@ -21,7 +22,7 @@ import (
 )
 
 type BaseAgentDomainService interface {
-	Chat(agents.ChatRequest, chan events.AgentEvent)
+	Chat(context.Context, agents.ChatRequest, chan events.AgentEvent)
 	CreatePlan(agents.AgentPlanCreateRequest, chan events.AgentEvent)
 	UpdatePlan(agents.AgentPlanUpdateRequest, chan events.AgentEvent)
 }
@@ -61,7 +62,7 @@ func NewBaseAgentDomainService(
 	}
 }
 
-func (s *BaseAgentDomainServiceImpl) Chat(request agents.ChatRequest, eventCh chan events.AgentEvent) {
+func (s *BaseAgentDomainServiceImpl) Chat(ctx context.Context, request agents.ChatRequest, eventCh chan events.AgentEvent) {
 	// 先调用createAgent创建Agent智能体
 	agent, err := s.createBaseAgent(request)
 	if err != nil {
@@ -79,10 +80,10 @@ func (s *BaseAgentDomainServiceImpl) Chat(request agents.ChatRequest, eventCh ch
 		defer wg.Done()
 		if request.Streaming {
 			logger.Info("begin invoke agent streaming", zap.String("query", request.Query))
-			agent.StreamingInvoke(request.Query, agentEventCh)
+			agent.StreamingInvoke(ctx, request.Query, agentEventCh)
 		} else {
 			logger.Info("begin invoke agent", zap.String("query", request.Query))
-			agent.Invoke(request.Query, agentEventCh)
+			agent.Invoke(ctx, request.Query, agentEventCh)
 		}
 	}()
 	go func() {
