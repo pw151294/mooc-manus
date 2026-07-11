@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"mooc-manus/internal/applications/dtos"
 	"mooc-manus/internal/domains/models/events"
 	"mooc-manus/internal/domains/models/memory"
@@ -12,6 +13,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -27,8 +29,10 @@ type BaseAgentApplicationService interface {
 
 type BaseAgentApplicationServiceImpl struct {
 	agentDomainSvc      agents.BaseAgentDomainService
-	skillExecutor       tools.SkillExecutor       // 用于 SSE 流结束时清理 skill 容器（D7=A）
-	nativeToolsProvider tools.NativeToolsProvider // 用于 SSE 流结束时清理 NATIVE workspace 目录
+	skillExecutor       tools.SkillExecutor           // 用于 SSE 流结束时清理 skill 容器（D7=A）
+	nativeToolsProvider tools.NativeToolsProvider     // 用于 SSE 流结束时清理 NATIVE workspace 目录
+	cancelFuncs         map[string]context.CancelFunc // messageId -> context cancel 函数映射，用于停止按钮主动中止对话
+	mu                  sync.Mutex
 }
 
 func NewBaseAgentApplicationService(
@@ -40,6 +44,7 @@ func NewBaseAgentApplicationService(
 		agentDomainSvc:      agentDomainSvc,
 		skillExecutor:       skillExecutor,
 		nativeToolsProvider: nativeToolsProvider,
+		cancelFuncs:         make(map[string]context.CancelFunc),
 	}
 }
 
@@ -88,7 +93,18 @@ func (s *BaseAgentApplicationServiceImpl) Chat(clientRequest dtos.ChatClientRequ
 	messageId := sse.StartChat(writer, clientRequest.ConversationId)
 	request.MessageId = messageId // 注入 messageId 到 domain 层，用于 Skill 容器隔离
 	logger.Info("start new chat", zap.String("messageId", messageId))
+
+	// 创建可 cancel 的 context，用于停止按钮和超时兜底
+	ctx, cancel := context.WithCancel(context.Background())
+	s.mu.Lock()
+	s.cancelFuncs[messageId] = cancel
+	s.mu.Unlock()
+
 	defer func() {
+		cancel() // 确保 context 被 cancel
+		s.mu.Lock()
+		delete(s.cancelFuncs, messageId)
+		s.mu.Unlock()
 		s.cleanupSkillByMessageID(messageId)
 		s.cleanupNativeToolsByMessageID(messageId)
 		sse.CloseChat(messageId)
@@ -97,12 +113,44 @@ func (s *BaseAgentApplicationServiceImpl) Chat(clientRequest dtos.ChatClientRequ
 
 	eventCh := make(chan events.AgentEvent)
 	logger.Info("begin chat in domain service")
-	s.agentDomainSvc.Chat(request, eventCh)
-	for event := range eventCh {
-		logger.Debug("event from agent", zap.String("type", event.EventType()), zap.Any("data", event))
-		event.SaveConversationId(clientRequest.ConversationId)
-		sse.SendEvent(event, messageId)
-		logger.Debug("send event to http response")
+
+	// 启动 agent goroutine
+	go s.agentDomainSvc.Chat(ctx, request, eventCh)
+
+	// 60s 无事件超时兜底
+	timer := time.NewTimer(60 * time.Second)
+	defer timer.Stop()
+
+	for {
+		select {
+		case event, ok := <-eventCh:
+			if !ok {
+				// eventCh 已关闭，agent 正常结束
+				return
+			}
+			logger.Debug("event from agent", zap.String("type", event.EventType()), zap.Any("data", event))
+			event.SaveConversationId(clientRequest.ConversationId)
+			sse.SendEvent(event, messageId)
+			logger.Debug("send event to http response")
+			// 重置超时计时器
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			timer.Reset(60 * time.Second)
+		case <-timer.C:
+			// 60s 无事件，超时兜底
+			logger.Warn("chat timeout: no event in 60 seconds", zap.String("messageId", messageId))
+			sse.SendEvent(events.OnError("对话超时：60 秒无响应"), messageId)
+			cancel() // 通知 agent 中止
+			// 等待 eventCh 关闭（agent goroutine 可能还在收尾）
+			for range eventCh {
+				// 消耗剩余事件避免 goroutine 泄漏
+			}
+			return
+		}
 	}
 }
 
@@ -203,6 +251,15 @@ func (s *BaseAgentApplicationServiceImpl) stopMessageInternal(messageId string) 
 	if messageId == "" {
 		return detail
 	}
+
+	// 0) Context cancel：通知 agent goroutine 中止
+	s.mu.Lock()
+	if cancel, ok := s.cancelFuncs[messageId]; ok {
+		cancel()
+		delete(s.cancelFuncs, messageId)
+		logger.Info("stop message: context cancelled", zap.String("messageId", messageId))
+	}
+	s.mu.Unlock()
 
 	// 1) SSE：先判断存在性再关闭；HasMessage 与 CloseChat 各自持锁，短时窗内并发也无害（CloseChat 幂等）
 	if sse.HasMessage(messageId) {
