@@ -44,6 +44,7 @@ func (s *A2AApplicationServiceImpl) A2AChat(clientRequest dtos.ChatClientRequest
 	for event := range eventCh {
 		logger.Debug("event from agent", zap.String("type", event.EventType()), zap.Any("data", event))
 		event.SaveConversationId(clientRequest.ConversationId)
+		event.SaveMessageId(messageId)
 		sse.SendEvent(event, messageId)
 	}
 }
