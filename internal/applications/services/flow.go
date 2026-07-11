@@ -47,6 +47,7 @@ func (s *BaseFlowApplicationServiceImpl) Run(clientRequest dtos.ChatClientReques
 	}()
 	for event := range flowEventCh {
 		event.SaveConversationId(clientRequest.ConversationId)
+		event.SaveMessageId(messageId)
 		sse.SendEvent(event, messageId)
 	}
 	wg.Wait()

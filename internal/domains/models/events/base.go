@@ -6,6 +6,7 @@ type AgentEvent interface {
 	EventId() string
 	EventType() string
 	SaveConversationId(string)
+	SaveMessageId(string)
 }
 
 type BaseEvent struct {
@@ -26,4 +27,8 @@ func (b *BaseEvent) EventType() string {
 
 func (b *BaseEvent) SaveConversationId(conversationId string) {
 	b.ConversationId = conversationId
+}
+
+func (b *BaseEvent) SaveMessageId(messageId string) {
+	b.MessageId = messageId
 }
