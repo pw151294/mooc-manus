@@ -33,7 +33,7 @@ func (e *A2AExecutor) Execute(ctx context.Context, reqCtx *a2asrv.RequestContext
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
-		e.agent.Invoke(query, eventCh) // 这里使用阻塞模式完成子Agent调用即可
+		e.agent.Invoke(context.Background(), query, eventCh) // 这里使用阻塞模式完成子Agent调用即可
 		wg.Done()
 	}()
 
