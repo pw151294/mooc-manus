@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync"
@@ -135,18 +136,9 @@ func (a *BaseAgent) InvokeToolCalls(toolCalls []llm.ToolCall, eventCh chan<- eve
 }
 
 func (a *BaseAgent) InvokeTool(tool tools.Tool, funcName, funcArgs string) models.ToolCallResult {
-	attempt := 0
-	for attempt < a.agentConfig.MaxRetries {
-		result := tool.Invoke(funcName, funcArgs)
-		if result.Success {
-			return result
-		}
-		attempt++
-	}
-	return models.ToolCallResult{
-		Success: false,
-		Message: "工具调用失败",
-	}
+	// 去掉重试循环：工具失败直接返回失败结果交给 LLM 重新规划
+	// 避免盲目重试导致长时间阻塞（如 bash 全盘搜索超时重试 3 次 → 17+ 分钟）
+	return tool.Invoke(funcName, funcArgs)
 }
 
 // StreamingInvokeLLM 在一个round内调用大模型不管在流式/非流式场景下都是阻塞调用的
