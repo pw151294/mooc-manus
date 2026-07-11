@@ -75,7 +75,7 @@ func (s *A2ADomainServiceImpl) A2AChat(request agents.ChatRequest, eventCh chan 
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
-		agent.StreamingInvoke(request.Query, agentEventCh)
+		agent.StreamingInvoke(context.Background(), request.Query, agentEventCh)
 		wg.Done()
 	}()
 	go func() {
