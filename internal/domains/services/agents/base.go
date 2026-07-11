@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync"
@@ -69,9 +70,16 @@ func (a *BaseAgent) AddToMemory(messages []llm.Message) {
 }
 
 // InvokeToolCalls 执行工具调用并采集ToolMessage 注：该方法不管在流式还是非流式的场景下都是阻塞调用的
-func (a *BaseAgent) InvokeToolCalls(toolCalls []llm.ToolCall, eventCh chan<- events.AgentEvent) []llm.Message {
+func (a *BaseAgent) InvokeToolCalls(ctx context.Context, toolCalls []llm.ToolCall, eventCh chan<- events.AgentEvent) []llm.Message {
 	toolMessages := make([]llm.Message, 0, len(toolCalls))
 	for _, toolCall := range toolCalls {
+		// 检查 context 是否已被 cancel（停止按钮 / 超时兜底）
+		select {
+		case <-ctx.Done():
+			logger.Info("InvokeToolCalls cancelled by context", zap.Error(ctx.Err()))
+			return toolMessages
+		default:
+		}
 		toolCallID := toolCall.ID
 		funcName := toolCall.Name
 		funcArgs := toolCall.Arguments
@@ -135,18 +143,7 @@ func (a *BaseAgent) InvokeToolCalls(toolCalls []llm.ToolCall, eventCh chan<- eve
 }
 
 func (a *BaseAgent) InvokeTool(tool tools.Tool, funcName, funcArgs string) models.ToolCallResult {
-	attempt := 0
-	for attempt < a.agentConfig.MaxRetries {
-		result := tool.Invoke(funcName, funcArgs)
-		if result.Success {
-			return result
-		}
-		attempt++
-	}
-	return models.ToolCallResult{
-		Success: false,
-		Message: "工具调用失败",
-	}
+	return tool.Invoke(funcName, funcArgs)
 }
 
 // StreamingInvokeLLM 在一个round内调用大模型不管在流式/非流式场景下都是阻塞调用的
@@ -225,7 +222,7 @@ func (a *BaseAgent) InvokeLLM(messages []llm.Message) (llm.Message, error) {
 	return llm.Message{}, fmt.Errorf("对话重试次数达到最大值：%v", errors.Join(errs...))
 }
 
-func (a *BaseAgent) Invoke(query string, eventCh chan events.AgentEvent) {
+func (a *BaseAgent) Invoke(ctx context.Context, query string, eventCh chan events.AgentEvent) {
 	messages := []llm.Message{{Role: llm.RoleUser, Content: query}}
 	logger.Info("begin invoke llm", zap.Any("query", query))
 	message, err := a.InvokeLLM(messages)
@@ -239,6 +236,15 @@ func (a *BaseAgent) Invoke(query string, eventCh chan events.AgentEvent) {
 	// 循环遍历直到最大的迭代次数
 	round := 0
 	for round < a.agentConfig.MaxIterations {
+		// 检查 context 是否已被 cancel（停止按钮 / 超时兜底）
+		select {
+		case <-ctx.Done():
+			logger.Info("Invoke cancelled by context", zap.Error(ctx.Err()), zap.Int("round", round))
+			eventCh <- events.OnError("对话已被中止")
+			close(eventCh)
+			return
+		default:
+		}
 		round++
 		toolCalls := message.ToolCalls
 		if len(toolCalls) == 0 {
@@ -249,7 +255,7 @@ func (a *BaseAgent) Invoke(query string, eventCh chan events.AgentEvent) {
 			return
 		}
 		logger.Info("begin invoke tool calls", zap.Any("toolCalls", toolCalls))
-		toolMessages := a.InvokeToolCalls(toolCalls, eventCh)
+		toolMessages := a.InvokeToolCalls(ctx, toolCalls, eventCh)
 
 		// 所有的工具都执行完成之后 调用LLM获取汇总消息二次提问
 		logger.Info("invoke llm", zap.Int("round", round), zap.Any("tool messages", toolMessages))
@@ -262,7 +268,7 @@ func (a *BaseAgent) Invoke(query string, eventCh chan events.AgentEvent) {
 }
 
 // StreamingInvoke 在流式/非流式场景下该方法都是阻塞调用的
-func (a *BaseAgent) StreamingInvoke(query string, eventCh chan events.AgentEvent) {
+func (a *BaseAgent) StreamingInvoke(ctx context.Context, query string, eventCh chan events.AgentEvent) {
 	messages := []llm.Message{{Role: llm.RoleUser, Content: query}}
 	var wg sync.WaitGroup
 	var shouldEnd atomic.Bool
@@ -270,6 +276,15 @@ func (a *BaseAgent) StreamingInvoke(query string, eventCh chan events.AgentEvent
 
 	round := 0
 	for round < a.agentConfig.MaxIterations {
+		// 检查 context 是否已被 cancel（停止按钮 / 超时兜底）
+		select {
+		case <-ctx.Done():
+			logger.Info("StreamingInvoke cancelled by context", zap.Error(ctx.Err()), zap.Int("round", round))
+			eventCh <- events.OnError("对话已被中止")
+			close(eventCh)
+			return
+		default:
+		}
 		round++
 		wg.Add(1)
 		llmEventCh := make(chan events.AgentEvent)
@@ -283,7 +298,7 @@ func (a *BaseAgent) StreamingInvoke(query string, eventCh chan events.AgentEvent
 				shouldEnd.CompareAndSwap(false, true)
 				return
 			}
-			messages = a.InvokeToolCalls(toolCalls, eventCh) // 这一步是阻塞调用 event直接上报给eventCh 无需监听
+			messages = a.InvokeToolCalls(ctx, toolCalls, eventCh) // 传递 context 给工具调用层
 		}()
 		for event := range llmEventCh {
 			eventCh <- event
