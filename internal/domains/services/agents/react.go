@@ -50,7 +50,7 @@ func (ra *ReActAgent) ExecuteStep(plan agents.Plan, step *agents.Step, request a
 	wg.Add(1)
 	execCh := make(chan events.AgentEvent)
 	go func() {
-		ra.Invoke(query, execCh) // 这里使用阻塞调用react智能体即可
+		ra.Invoke(context.Background(), query, execCh) // 这里使用阻塞调用react智能体即可
 		wg.Done()
 	}()
 
@@ -104,7 +104,7 @@ func (ra *ReActAgent) Summarize(eventCh chan<- events.AgentEvent) {
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
-		ra.Invoke(query, summaryCh)
+		ra.Invoke(context.Background(), query, summaryCh)
 		wg.Done()
 	}()
 	for event := range summaryCh {

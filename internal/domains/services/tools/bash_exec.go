@@ -203,13 +203,42 @@ func (t *BashExecTool) Invoke(funcName, funcArgs string) models.ToolCallResult {
 
 	cmd := exec.CommandContext(ctx, "bash", "-c", params.Command)
 	cmd.Dir = t.cwd
+	// 设置 Setpgid=true 创建新进程组，便于超时时 kill 整个进程树
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	var stdoutBuf, stderrBuf bytes.Buffer
 	cmd.Stdout = &stdoutBuf
 	cmd.Stderr = &stderrBuf
 	// 环境变量继承父进程
 
 	start := time.Now()
-	runErr := cmd.Run()
+
+	// 启动命令
+	if err := cmd.Start(); err != nil {
+		return models.ToolCallResult{
+			Success: false,
+			Message: fmt.Sprintf("启动命令失败：%v", err),
+		}
+	}
+
+	// 启动一个 goroutine 监听 context cancel，超时时 kill 进程组
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+
+	var runErr error
+	select {
+	case <-ctx.Done():
+		// 超时或被 cancel，kill 整个进程组（负号表示 kill 进程组）
+		if cmd.Process != nil {
+			logger.Warn("bash command timeout, killing process group", zap.Int("pid", cmd.Process.Pid), zap.Duration("timeout", timeout))
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		}
+		<-done // 等待 Wait() 返回避免僵尸进程
+	case runErr = <-done:
+		// 正常结束或执行失败（runErr 可能为 nil）
+	}
+
 	duration := time.Since(start)
 
 	exitCode := 0
