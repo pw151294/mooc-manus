@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"mooc-manus/internal/domains/models/agents"
@@ -53,7 +54,7 @@ func (pa *PlanAgent) CreatePlan(message string, files []file.File, eventCh chan<
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
-		pa.Invoke(query, agentEventCh) // 这一步直接阻塞调用让大模型直接输出计划即可 需要监听agentEventCh上报的event
+		pa.Invoke(context.Background(), query, agentEventCh) // 这一步直接阻塞调用让大模型直接输出计划即可 需要监听agentEventCh上报的event
 		wg.Done()
 	}()
 	for event := range agentEventCh {
@@ -99,7 +100,7 @@ func (pa *PlanAgent) UpdatePlan(plan agents.Plan, step agents.Step, eventCh chan
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
-		pa.Invoke(query, agentEventCh)
+		pa.Invoke(context.Background(), query, agentEventCh)
 		wg.Done()
 	}()
 
