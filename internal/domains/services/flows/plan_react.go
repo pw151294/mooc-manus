@@ -29,6 +29,7 @@ func NewPlanReActFlow(agentConfig models.AgentConfig, inv invoker.Invoker, sessi
 	flow.sessionId = sessionId
 	flow.status = FlowStatusIdle
 	flow.sessionStatus = SessionStatusPending
+	// PlanReAct flow 暂不接入 HITL：无 SSE/messageId 上下文
 	plannerBaseAgent := agents.NewBaseAgent(agentConfig, inv, memory.FetchMemory("planner::"+sessionId), tools, "")
 	flow.planner = agents.NewPlanAgent(plannerBaseAgent)
 	reActBaseAgent := agents.NewBaseAgent(agentConfig, inv, memory.FetchMemory("react::"+sessionId), tools, "")

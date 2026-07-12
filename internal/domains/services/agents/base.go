@@ -14,6 +14,7 @@ import (
 	"mooc-manus/internal/domains/models"
 	"mooc-manus/internal/domains/models/circuitbreaker"
 	"mooc-manus/internal/domains/models/events"
+	"mooc-manus/internal/domains/models/interrupt"
 	"mooc-manus/internal/domains/models/invoker"
 	"mooc-manus/internal/domains/models/llm"
 	"mooc-manus/internal/domains/models/memory"
@@ -30,10 +31,26 @@ type BaseAgent struct {
 	memory         *memory.ChatMemory
 	tools          []tools.Tool
 	circuitBreaker *circuitbreaker.ToolCallCounter
+	// 【HITL 新增】
+	pendingSink PendingSink // 可为 nil，nil 时 InvokeToolCalls 跳过 HITL 闸门（A2A 场景）
+	messageId   string      // HITL 用于 RegisterInterrupt 定位 slot
 }
 
-func NewBaseAgent(agentConfig models.AgentConfig, inv invoker.Invoker, mem *memory.ChatMemory, ts []tools.Tool, systemPrompt string) *BaseAgent {
-	return &BaseAgent{
+// BaseAgentOption 为 NewBaseAgent 的可选参数
+type BaseAgentOption func(*BaseAgent)
+
+// WithPendingSink 注入 HITL 审批管理器；nil 或不传则不启用 HITL
+func WithPendingSink(sink PendingSink) BaseAgentOption {
+	return func(a *BaseAgent) { a.pendingSink = sink }
+}
+
+// WithMessageId 注入 messageId，供 HITL Register 使用
+func WithMessageId(mid string) BaseAgentOption {
+	return func(a *BaseAgent) { a.messageId = mid }
+}
+
+func NewBaseAgent(agentConfig models.AgentConfig, inv invoker.Invoker, mem *memory.ChatMemory, ts []tools.Tool, systemPrompt string, opts ...BaseAgentOption) *BaseAgent {
+	a := &BaseAgent{
 		agentConfig:    agentConfig,
 		invoker:        inv,
 		memory:         mem,
@@ -42,6 +59,10 @@ func NewBaseAgent(agentConfig models.AgentConfig, inv invoker.Invoker, mem *memo
 		retryInterval:  5,
 		circuitBreaker: circuitbreaker.NewToolCallCounter(),
 	}
+	for _, opt := range opts {
+		opt(a)
+	}
+	return a
 }
 
 func (a *BaseAgent) GetAvailableTools() []llm.Tool {
@@ -135,6 +156,73 @@ func (a *BaseAgent) InvokeToolCalls(ctx context.Context, toolCalls []llm.ToolCal
 			eventCh <- events.OnToolCallFail(toolCall, "", &result)
 			continue
 		}
+
+		// ===== 【HITL 新增】风险审批闸门 =====
+		if tool.SupportsRiskAssessment() && a.pendingSink != nil {
+			risk, reason, perr := interrupt.ParseRiskFromArgs(funcArgs)
+			if perr != nil {
+				logger.Warn("HITL 风险字段解析失败，降级为直接执行",
+					zap.String("component", "hitl"),
+					zap.String("tool", funcName),
+					zap.Error(perr))
+			} else if risk == "dangerous" {
+				snap := InterruptSnapshot{
+					ToolCallID:   toolCallID,
+					FunctionName: funcName,
+					FunctionArgs: funcArgs,
+					RiskLevel:    risk,
+					RiskReason:   reason,
+					RegisteredAt: time.Now(),
+				}
+				ch, regErr := a.pendingSink.RegisterInterrupt(a.messageId, snap)
+				if regErr != nil {
+					logger.Error("HITL Register 撞已有 pending，视为拒绝",
+						zap.String("component", "hitl"),
+						zap.String("mid", a.messageId),
+						zap.Error(regErr))
+					toolMessages = append(toolMessages,
+						buildRejectMessage(toolCall, "系统内部错误，拒绝执行"))
+					toolMessages = appendSiblingSkipped(toolMessages, toolCalls, toolCall.ID)
+					a.circuitBreaker.StartNewRound(currentRoundKeys)
+					return toolMessages
+				}
+				eventCh <- events.OnToolCallInterrupt(toolCall, tool.ProviderName(), risk, reason)
+
+				var decision InterruptDecision
+				select {
+				case decision = <-ch:
+				case <-time.After(a.pendingSink.WaitTimeout()):
+					decision = InterruptDecision{Kind: DecisionTimeout}
+				case <-ctx.Done():
+					return toolMessages
+				}
+
+				switch decision.Kind {
+				case DecisionApprove:
+					// 落地：继续走原 InvokeTool 分支（下方无需 continue）
+				case DecisionReject:
+					content := interrupt.MsgUserReject
+					if decision.Feedback != "" {
+						content = fmt.Sprintf(interrupt.MsgUserRejectWithFeedbackTpl, decision.Feedback)
+					}
+					toolMessages = append(toolMessages, buildRejectMessage(toolCall, content))
+					toolMessages = appendSiblingSkipped(toolMessages, toolCalls, toolCall.ID)
+					a.circuitBreaker.StartNewRound(currentRoundKeys)
+					return toolMessages
+				case DecisionTimeout:
+					toolMessages = append(toolMessages,
+						buildRejectMessage(toolCall, interrupt.MsgTimeout))
+					toolMessages = appendSiblingSkipped(toolMessages, toolCalls, toolCall.ID)
+					a.circuitBreaker.StartNewRound(currentRoundKeys)
+					return toolMessages
+				case DecisionCancel:
+					// Stop 路径接管清理，直接 return
+					return toolMessages
+				}
+			}
+		}
+		// ===== 中断闸门结束 =====
+
 		// 开始工具调用
 		eventCh <- events.OnToolCallStart(toolCall, tool.ProviderName())
 		result := a.InvokeTool(tool, funcName, funcArgs)
@@ -180,6 +268,32 @@ func (a *BaseAgent) recordToolFailure(key, funcName, funcArgs string) {
 		zap.String("tool", funcName),
 		zap.String("key", key),
 		zap.Int("failCount", failCount))
+}
+
+// buildRejectMessage 构造一条"工具未执行"的 tool result 消息，供 HITL 拒绝/超时/中止路径使用
+func buildRejectMessage(toolCall llm.ToolCall, content string) llm.Message {
+	return llm.Message{
+		Role:       llm.RoleTool,
+		Content:    content,
+		ToolCallID: toolCall.ID,
+	}
+}
+
+// appendSiblingSkipped 为 abortedToolCallID 之后（不含）的所有 toolCall 追加"因用户拒绝而未执行"占位消息。
+// 保证同一轮内 assistant.tool_calls 中每条 ID 都能配到一条 tool result，避免 memory 里孤儿。
+func appendSiblingSkipped(msgs []llm.Message, toolCalls []llm.ToolCall, abortedToolCallID string) []llm.Message {
+	seen := false
+	for _, tc := range toolCalls {
+		if tc.ID == abortedToolCallID {
+			seen = true
+			continue
+		}
+		if !seen {
+			continue
+		}
+		msgs = append(msgs, buildRejectMessage(tc, interrupt.MsgSiblingSkipped))
+	}
+	return msgs
 }
 
 // injectInterventionIfNeeded 在进入 LLM 前检查是否有工具触发熔断阈值；若有则向 messages 追加一条用户角色的干预提示并返回新 slice。

@@ -4,6 +4,8 @@ import (
 	"context"
 	"mooc-manus/internal/applications/dtos"
 	"mooc-manus/internal/domains/models/events"
+	"mooc-manus/internal/domains/models/interrupt"
+	"mooc-manus/internal/domains/models/llm"
 	"mooc-manus/internal/domains/models/memory"
 	"mooc-manus/internal/domains/models/prompts"
 	"mooc-manus/internal/domains/services/agents"
@@ -25,6 +27,7 @@ type BaseAgentApplicationService interface {
 	UpdatePlan(dtos.AgentPlanUpdateClientRequest, http.ResponseWriter)
 	StopMessage(messageId string) dtos.StopMessageResult
 	StopConversation(conversationId string) dtos.StopConversationResult
+	Resume(req dtos.ResumeClientRequest) dtos.ResumeResult // 【HITL 新增】
 }
 
 type BaseAgentApplicationServiceImpl struct {
@@ -32,6 +35,8 @@ type BaseAgentApplicationServiceImpl struct {
 	skillExecutor       tools.SkillExecutor           // 用于 SSE 流结束时清理 skill 容器（D7=A）
 	nativeToolsProvider tools.NativeToolsProvider     // 用于 SSE 流结束时清理 NATIVE workspace 目录
 	cancelFuncs         map[string]context.CancelFunc // messageId -> context cancel 函数映射，用于停止按钮主动中止对话
+	pendingInterrupts   map[string]*pendingSlot       // 【HITL 新增】messageId -> pending slot
+	waitTimeout         time.Duration                 // 【HITL 新增】测试注入用
 	mu                  sync.Mutex
 }
 
@@ -45,6 +50,8 @@ func NewBaseAgentApplicationService(
 		skillExecutor:       skillExecutor,
 		nativeToolsProvider: nativeToolsProvider,
 		cancelFuncs:         make(map[string]context.CancelFunc),
+		pendingInterrupts:   make(map[string]*pendingSlot),
+		waitTimeout:         5 * time.Minute,
 	}
 }
 
@@ -78,6 +85,7 @@ func (s *BaseAgentApplicationServiceImpl) Chat(clientRequest dtos.ChatClientRequ
 		logger.Info("start new conversation", zap.String("conversationId", clientRequest.ConversationId))
 	}
 	request := dtos.ConvertChatClientRequest2Request(clientRequest)
+	request.PendingSink = s // s 已实现 agents.PendingSink 接口（Task 11）
 
 	// PlanMode：注入规划提示词 + 断点续跑自动恢复
 	if clientRequest.PlanMode && s.nativeToolsProvider != nil {
@@ -256,6 +264,37 @@ func (s *BaseAgentApplicationServiceImpl) stopMessageInternal(messageId string) 
 	detail := dtos.StopMessageCleanDetail{}
 	if messageId == "" {
 		return detail
+	}
+
+	// 【HITL 新增】0.5) 先解绑 pending 让 Agent goroutine 从 select 退出
+	s.mu.Lock()
+	slot, hasPending := s.pendingInterrupts[messageId]
+	if hasPending {
+		delete(s.pendingInterrupts, messageId)
+	}
+	s.mu.Unlock()
+
+	if hasPending {
+		_ = slot.resolve(agents.InterruptDecision{Kind: agents.DecisionCancel})
+		time.Sleep(200 * time.Millisecond) // 兜底：等 goroutine 从 select 退出
+
+		// 补齐孤儿 tool result：conversationId 优先从 sse.Manager 反查
+		if cid := sse.ConversationIdOf(messageId); cid != "" {
+			mem := memory.FetchMemory(cid)
+			mem.AddMessage(llm.Message{
+				Role:       llm.RoleTool,
+				Content:    interrupt.MsgUserStop,
+				ToolCallID: slot.snapshot.ToolCallID,
+			})
+			logger.Info("HITL 补齐孤儿 tool result",
+				zap.String("component", "hitl"),
+				zap.String("mid", messageId),
+				zap.String("tcid", slot.snapshot.ToolCallID))
+		} else {
+			logger.Warn("HITL Stop 补齐 memory 找不到 conversationId",
+				zap.String("component", "hitl"),
+				zap.String("mid", messageId))
+		}
 	}
 
 	// 0) Context cancel：通知 agent goroutine 中止

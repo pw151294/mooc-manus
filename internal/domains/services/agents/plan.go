@@ -33,6 +33,8 @@ func NewPlanAgent(baseAgent *BaseAgent) *PlanAgent {
 	agent.tools = baseAgent.tools
 	agent.retryInterval = 5
 	agent.circuitBreaker = baseAgent.circuitBreaker
+	agent.pendingSink = baseAgent.pendingSink
+	agent.messageId = baseAgent.messageId
 	agent.systemPrompt = prompts.GetSystemPrompt()
 	agent.planSystemPrompt = prompts.GetPlanSystemPrompt()
 	agent.planCreatePrompt = prompts.GetPlanCreatePrompt()
