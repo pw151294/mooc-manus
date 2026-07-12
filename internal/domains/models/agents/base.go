@@ -2,6 +2,7 @@ package agents
 
 import (
 	"mooc-manus/internal/domains/models/file"
+	"mooc-manus/internal/domains/models/interrupt"
 )
 
 type SkillRef struct {
@@ -21,7 +22,8 @@ type ChatRequest struct {
 	ProviderIds    []string
 	SkillRefs      []SkillRef
 	Files          []file.File
-	PlanMode       bool // 规划模式开关：开启后框架自动注入 PlanMode 提示词并实现记忆持久化
+	PlanMode       bool                  // 规划模式开关：开启后框架自动注入 PlanMode 提示词并实现记忆持久化
+	PendingSink    interrupt.PendingSink // HITL 审批管理器（由 application 层注入）
 }
 
 type AgentPlanCreateRequest struct {

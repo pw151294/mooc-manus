@@ -139,8 +139,17 @@ func (t *BashExecTool) Init() error {
 						"type":        "string",
 						"description": "本次命令的用途简述，用于审计日志（必填）",
 					},
+					"risk_level": map[string]any{
+						"type":        "string",
+						"enum":        []string{"safe", "dangerous"},
+						"description": "本次命令的风险等级；仅当命令确定不会造成任何数据丢失、权限变更、外部副作用时才可为 safe。以下类型必须标注为 dangerous：\n1. 删除类：rm -rf、find ... -delete、mkfs、dd\n2. 权限变更类：chmod 777、chown、sudo、setuid\n3. 网络下载执行类：curl ... | sh、wget ... | bash、任何管道到 shell 的模式\n4. 系统关键路径写入：/etc、/boot、/usr、/System、系统 crontab、~/.ssh/authorized_keys\n5. 进程/系统级操作：kill -9、pkill、systemctl、fork bomb\n6. 数据库破坏性操作：DROP、TRUNCATE、DELETE 全表",
+					},
+					"risk_reason": map[string]any{
+						"type":        "string",
+						"description": "本次风险等级的判断依据；若为 safe 也需一句话说明为何安全",
+					},
 				},
-				"required": []string{"command", "description"},
+				"required": []string{"command", "description", "risk_level", "risk_reason"},
 			},
 		},
 	}
@@ -302,3 +311,6 @@ func truncateCombinedOutput(stdout, stderr []byte, cap int) (string, bool) {
 	buf.Write(data[merged.Len()-tailLen:])
 	return buf.String(), true
 }
+
+// SupportsRiskAssessment 覆写 BaseTool 默认实现；bashExec 是 HITL 首发接入的工具
+func (t *BashExecTool) SupportsRiskAssessment() bool { return true }

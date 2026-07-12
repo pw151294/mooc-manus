@@ -251,7 +251,10 @@ func (s *BaseAgentDomainServiceImpl) createBaseAgent(request agents.ChatRequest)
 		}
 	}
 
-	return NewBaseAgent(appConfig.AgentConfig, inv, chatMemory, baseTools, systemPrompt), nil
+	return NewBaseAgent(appConfig.AgentConfig, inv, chatMemory, baseTools, systemPrompt,
+		WithMessageId(request.MessageId),
+		WithPendingSink(request.PendingSink),
+	), nil
 }
 
 // skillUsageRules Skill 使用规则常量（对齐 Beedance BaseAgent.java:163-179）
