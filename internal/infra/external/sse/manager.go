@@ -116,6 +116,14 @@ func MessageIdsOf(conversationId string) []string {
 	return out
 }
 
+// ConversationIdOf 返回 messageId 对应的 conversationId；未绑定时返回空串
+// 供 HITL Stop 路径补齐孤儿 tool result 时反查 memory
+func ConversationIdOf(messageId string) string {
+	manager.Lock()
+	defer manager.Unlock()
+	return manager.messageId2ConversationId[messageId]
+}
+
 func SendEvent(event events.AgentEvent, messageId string) {
 	manager.Lock()
 	sseEmitter, ok := manager.messageId2SseEmitter[messageId]
