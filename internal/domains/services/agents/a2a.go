@@ -117,6 +117,7 @@ func (s *A2ADomainServiceImpl) createA2AExecutor(conversationId string, appConfi
 	}
 
 	// 初始化baseAgent
+	// A2A 场景不接入 HITL：工具在远端 agent 执行，不经过本地 pendingSink
 	inv := PickInvoker(appConfig.ModelConfig)
 	agentConversationId := fmt.Sprintf("%s::%s", srvCfg.ID, conversationId)
 	chatMemory := memory.FetchMemory(agentConversationId)
