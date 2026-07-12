@@ -77,3 +77,24 @@ func (h *AgentHandler) StopConversation(c *gin.Context) {
 	result := h.baseAgentAppSvc.StopConversation(clientRequest.ConversationId)
 	c.JSON(http.StatusOK, result)
 }
+
+// Resume 处理 HITL 决策回投
+// 200 accepted / 409 already_decided / 404 not_found / 400 参数错误
+func (h *AgentHandler) Resume(c *gin.Context) {
+	clientRequest := dtos.ResumeClientRequest{}
+	if err := c.ShouldBindJSON(&clientRequest); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	result := h.baseAgentAppSvc.Resume(clientRequest)
+	switch result.Status {
+	case "accepted":
+		c.JSON(http.StatusOK, result)
+	case "already_decided":
+		c.JSON(http.StatusConflict, result)
+	case "not_found":
+		c.JSON(http.StatusNotFound, result)
+	default:
+		c.JSON(http.StatusInternalServerError, result)
+	}
+}

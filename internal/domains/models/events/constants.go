@@ -18,14 +18,16 @@ const (
 	EventTypeStepStart         = "step_start"
 	EventTypeStepComplete      = "step_complete"
 	EventTypeStepFail          = "step_fail"
+	EventTypeToolCallInterrupt = "tool_call_interrupt"
 )
 
 type ToolEventStatus string
 
 const (
-	ToolEventStatusCalling   ToolEventStatus = "calling"
-	ToolEventStatusCompleted ToolEventStatus = "completed"
-	ToolEventStatusFailed    ToolEventStatus = "failed"
+	ToolEventStatusCalling     ToolEventStatus = "calling"
+	ToolEventStatusCompleted   ToolEventStatus = "completed"
+	ToolEventStatusFailed      ToolEventStatus = "failed"
+	ToolEventStatusInterrupted ToolEventStatus = "interrupted"
 )
 
 // PlanEventStatus 规划事件状态
