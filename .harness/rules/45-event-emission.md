@@ -33,6 +33,7 @@ severity: high
    |----|------|---------|-------------|
    | 消息 | `message` / `message_end` / `title` | LLM 流式文本到达 / 单轮文本结束 / 摘要标题生成 | `Message` / `Role` / `Timestamp`；title 含 `Title` |
    | 工具 | `tool_call_start` / `tool_call_complete` / `tool_call_fail` | LLM 决定调用 / 调用成功 / 调用失败 | `ToolCallID` / `ToolName` / `FunctionName` / `Status` |
+   | HITL | `tool_call_interrupt` | 高危工具需用户审批（HITL）；Agent goroutine park 等待 `/api/agent/resume` 回投 | `ToolCallID` / `ToolName` / `FunctionName` / `FunctionArgs` / `RiskLevel` / `RiskReason` / `Status="interrupted"` |
    | 计划 | `plan_create_success` / `plan_update_success` / `plan_update_failed` / `plan_completed` | PlanAgent 各阶段 | `Plan` / `Status` |
    | 步骤 | `step_start` / `step_complete` / `step_fail` | ReActAgent 步骤执行 | `Step` / `Status` |
    | 系统 | `wait` / `error` / `done` | 等待用户输入 / 异常 / 流结束 | error 含 `Error`，done 含 `Timestamp` |
