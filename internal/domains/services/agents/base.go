@@ -12,6 +12,7 @@ import (
 	"go.uber.org/zap"
 
 	"mooc-manus/internal/domains/models"
+	"mooc-manus/internal/domains/models/circuitbreaker"
 	"mooc-manus/internal/domains/models/events"
 	"mooc-manus/internal/domains/models/invoker"
 	"mooc-manus/internal/domains/models/llm"
@@ -21,23 +22,25 @@ import (
 )
 
 type BaseAgent struct {
-	name          string
-	systemPrompt  string
-	retryInterval int
-	agentConfig   models.AgentConfig
-	invoker       invoker.Invoker
-	memory        *memory.ChatMemory
-	tools         []tools.Tool
+	name           string
+	systemPrompt   string
+	retryInterval  int
+	agentConfig    models.AgentConfig
+	invoker        invoker.Invoker
+	memory         *memory.ChatMemory
+	tools          []tools.Tool
+	circuitBreaker *circuitbreaker.ToolCallCounter
 }
 
 func NewBaseAgent(agentConfig models.AgentConfig, inv invoker.Invoker, mem *memory.ChatMemory, ts []tools.Tool, systemPrompt string) *BaseAgent {
 	return &BaseAgent{
-		agentConfig:   agentConfig,
-		invoker:       inv,
-		memory:        mem,
-		tools:         ts,
-		systemPrompt:  systemPrompt,
-		retryInterval: 5,
+		agentConfig:    agentConfig,
+		invoker:        inv,
+		memory:         mem,
+		tools:          ts,
+		systemPrompt:   systemPrompt,
+		retryInterval:  5,
+		circuitBreaker: circuitbreaker.NewToolCallCounter(),
 	}
 }
 
@@ -72,6 +75,7 @@ func (a *BaseAgent) AddToMemory(messages []llm.Message) {
 // InvokeToolCalls 执行工具调用并采集ToolMessage 注：该方法不管在流式还是非流式的场景下都是阻塞调用的
 func (a *BaseAgent) InvokeToolCalls(ctx context.Context, toolCalls []llm.ToolCall, eventCh chan<- events.AgentEvent) []llm.Message {
 	toolMessages := make([]llm.Message, 0, len(toolCalls))
+	currentRoundKeys := make([]string, 0, len(toolCalls))
 	for _, toolCall := range toolCalls {
 		// 检查 context 是否已被 cancel（停止按钮 / 超时兜底）
 		select {
@@ -102,6 +106,16 @@ func (a *BaseAgent) InvokeToolCalls(ctx context.Context, toolCalls []llm.ToolCal
 			continue
 		}
 		funcArgs = repairedArgs // 使用修复后的参数
+		// 熔断机制：生成工具调用 Key，用于失败计数
+		key, err := circuitbreaker.GenerateKey(funcName, funcArgs)
+		if err != nil {
+			logger.Warn("生成工具调用 Key 失败，跳过计数",
+				zap.String("tool", funcName),
+				zap.Error(err))
+			key = ""
+		} else {
+			currentRoundKeys = append(currentRoundKeys, key)
+		}
 
 		// 查询Agent中对应的工具
 		tool := a.GetTool(funcName)
@@ -116,6 +130,8 @@ func (a *BaseAgent) InvokeToolCalls(ctx context.Context, toolCalls []llm.ToolCal
 				Success: false,
 				Message: errMsg,
 			}
+			// 工具不存在也计入熔断
+			a.recordToolFailure(key, funcName, funcArgs)
 			eventCh <- events.OnToolCallFail(toolCall, "", &result)
 			continue
 		}
@@ -124,6 +140,7 @@ func (a *BaseAgent) InvokeToolCalls(ctx context.Context, toolCalls []llm.ToolCal
 		result := a.InvokeTool(tool, funcName, funcArgs)
 		eventCh <- events.OnToolCallComplete(toolCall, tool.ProviderName(), &result)
 		if !result.Success {
+			a.recordToolFailure(key, funcName, funcArgs)
 			eventCh <- events.OnToolCallFail(toolCall, tool.ProviderName(), &result)
 			toolMessages = append(toolMessages, llm.Message{
 				Role:       llm.RoleTool,
@@ -139,6 +156,9 @@ func (a *BaseAgent) InvokeToolCalls(ctx context.Context, toolCalls []llm.ToolCal
 		}
 	}
 
+	// 熔断机制：本轮工具调用结束，清零未出现在本轮的历史计数
+	a.circuitBreaker.StartNewRound(currentRoundKeys)
+
 	return toolMessages
 }
 
@@ -146,8 +166,46 @@ func (a *BaseAgent) InvokeTool(tool tools.Tool, funcName, funcArgs string) model
 	return tool.Invoke(funcName, funcArgs)
 }
 
+// recordToolFailure 记录一次工具调用失败到熔断计数器。key 为空时直接跳过（GenerateKey 曾失败）。
+func (a *BaseAgent) recordToolFailure(key, funcName, funcArgs string) {
+	if key == "" {
+		return
+	}
+	metadata := circuitbreaker.ToolCallMetadata{
+		ToolName:      funcName,
+		ParamsPreview: circuitbreaker.GenerateParamsPreview(funcName, funcArgs),
+	}
+	failCount := a.circuitBreaker.RecordFailure(key, metadata)
+	logger.Info("工具调用失败，更新计数器",
+		zap.String("tool", funcName),
+		zap.String("key", key),
+		zap.Int("failCount", failCount))
+}
+
+// injectInterventionIfNeeded 在进入 LLM 前检查是否有工具触发熔断阈值；若有则向 messages 追加一条用户角色的干预提示并返回新 slice。
+func (a *BaseAgent) injectInterventionIfNeeded(messages []llm.Message) []llm.Message {
+	triggeredRecords := a.circuitBreaker.GetTriggeredRecords(3)
+	if len(triggeredRecords) == 0 {
+		return messages
+	}
+	interventionMsg := circuitbreaker.BuildInterventionPrompt(triggeredRecords)
+	messages = append(messages, llm.Message{
+		Role:    llm.RoleUser,
+		Content: interventionMsg,
+	})
+	toolNames := make([]string, 0, len(triggeredRecords))
+	for _, r := range triggeredRecords {
+		toolNames = append(toolNames, r.ToolName)
+	}
+	logger.Warn("检测到工具调用死循环，注入干预提示",
+		zap.Int("triggeredCount", len(triggeredRecords)),
+		zap.Strings("tools", toolNames))
+	return messages
+}
+
 // StreamingInvokeLLM 在一个round内调用大模型不管在流式/非流式场景下都是阻塞调用的
 func (a *BaseAgent) StreamingInvokeLLM(messages []llm.Message, eventCh chan<- events.AgentEvent) llm.Message {
+	messages = a.injectInterventionIfNeeded(messages)
 	a.AddToMemory(messages)
 	availableTools := a.GetAvailableTools()
 	messagesToAdd := make([]llm.Message, 0)
@@ -185,6 +243,7 @@ func (a *BaseAgent) StreamingInvokeLLM(messages []llm.Message, eventCh chan<- ev
 }
 
 func (a *BaseAgent) InvokeLLM(messages []llm.Message) (llm.Message, error) {
+	messages = a.injectInterventionIfNeeded(messages)
 	a.AddToMemory(messages)
 	availableTools := a.GetAvailableTools()
 	logger.Info("begin llm chat", zap.Any("messages", a.GetMessages()), zap.Any("available tools", availableTools))

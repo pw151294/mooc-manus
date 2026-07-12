@@ -25,6 +25,7 @@ func NewReActAgent(baseAgent *BaseAgent) *ReActAgent {
 	agent.memory = baseAgent.memory
 	agent.tools = baseAgent.tools
 	agent.retryInterval = 5
+	agent.circuitBreaker = baseAgent.circuitBreaker
 	agent.systemPrompt = prompts.GetReActSystemPrompt()
 
 	return agent
