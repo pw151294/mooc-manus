@@ -193,6 +193,7 @@ func InitRouter() *gin.Engine {
 		agent.POST("/plan/update", agentHandler.UpdatePlan)
 		agent.POST("/message/stop", agentHandler.StopMessage)
 		agent.POST("/conversation/stop", agentHandler.StopConversation)
+		agent.POST("/resume", agentHandler.Resume)
 	}
 
 	flow := r.Group("/api/flow")

@@ -11,6 +11,7 @@ type Tool interface {
 	Invoke(funcName, funcArgs string) models.ToolCallResult
 	Init() error
 	ProviderName() string
+	SupportsRiskAssessment() bool // 【HITL 新增】true 表示该工具的 arguments 需要读 risk_level / risk_reason
 }
 
 func InitTools(providers []models.ToolProviderDO, proId2Funcs map[string][]models.ToolFunctionDO, srvCfgs []models.A2AServerConfigDO) ([]Tool, error) {
@@ -70,3 +71,6 @@ func (t *BaseTool) HasTool(funcName string) bool {
 func (t *BaseTool) ProviderName() string {
 	return t.providerName
 }
+
+// SupportsRiskAssessment 默认返回 false；需要接入 HITL 的工具（如 BashExecTool）自行覆写为 true
+func (t *BaseTool) SupportsRiskAssessment() bool { return false }
