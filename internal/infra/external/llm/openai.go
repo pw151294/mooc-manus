@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"mooc-manus/internal/domains/models"
 	"mooc-manus/internal/domains/models/events"
@@ -78,8 +79,15 @@ func (l *OpenAiLLM) StreamingInvoke(messages []openai.ChatCompletionMessageParam
 			}
 		}
 	}
-	if stream.Err() != nil {
-		eventCh <- events.OnError(stream.Err().Error())
+	if streamErr := stream.Err(); streamErr != nil {
+		errMsg := streamErr.Error()
+		if errors.Is(streamErr, context.DeadlineExceeded) {
+			errMsg = fmt.Sprintf("llm streaming timeout after %ds: %s", l.timeout, errMsg)
+			logger.Warn("llm streaming timeout", zap.Int("timeout_seconds", l.timeout), zap.String("model", l.modelName))
+		} else {
+			logger.Warn("llm streaming error", zap.Error(streamErr), zap.String("model", l.modelName))
+		}
+		eventCh <- events.OnError(errMsg)
 	}
 	close(eventCh)
 	if len(acc.Choices) == 0 {
