@@ -455,12 +455,13 @@ func (a *BaseAgent) startRoundSpan(ctx context.Context, round int) (context.Cont
 	return roundCtx, roundSpan
 }
 
-// recordCtxCancelled 在 ctx cancel 分支记录里程碑
+// recordCtxCancelled 在 ctx cancel 分支记录里程碑；cancel 属于会话级异常，root span 标红
 func (a *BaseAgent) recordCtxCancelled(rootSpan *tracing.Span, round int, err error) {
 	rootSpan.AddLog("WARN", "agent.context_cancelled", map[string]interface{}{
 		"round": round,
 		"err":   err.Error(),
 	})
+	rootSpan.SetError(fmt.Errorf("agent context cancelled at round %d: %v", round, err))
 }
 
 // recordMaxIterationsExceeded 循环耗尽时记录里程碑并标错到 root span
@@ -483,6 +484,12 @@ func (a *BaseAgent) startLLMCallSpan(ctx context.Context) *tracing.Span {
 // recordLLMFirstToken 在流式模式下记录首个事件到达的里程碑
 func (a *BaseAgent) recordLLMFirstToken(llmSpan *tracing.Span, eventType string) {
 	llmSpan.AddLog("INFO", "llm.stream.first_token", map[string]interface{}{"event_type": eventType})
+}
+
+// recordLLMStreamError LLM 流式调用中途出错：从 error 事件中抽错并标到 span
+func (a *BaseAgent) recordLLMStreamError(llmSpan *tracing.Span, errMsg string) {
+	llmSpan.SetError(fmt.Errorf("llm stream error: %s", errMsg))
+	llmSpan.AddLog("ERROR", "llm.stream.error", map[string]interface{}{"message": errMsg})
 }
 
 // finalizeLLMSpanSuccess LLM 调用成功收尾：补 tool_calls_count tag + 完成日志
@@ -560,16 +567,26 @@ func (a *BaseAgent) StreamingInvokeLLM(ctx context.Context, messages []llm.Messa
 	}()
 
 	firstTokenSeen := false
+	streamErr := ""
 	for event := range llmEventCh {
 		if !firstTokenSeen {
 			a.recordLLMFirstToken(llmSpan, event.EventType())
 			firstTokenSeen = true
 		}
+		if event.EventType() == events.EventTypeError {
+			if ee, ok := event.(*events.ErrorEvent); ok {
+				streamErr = ee.Error
+			}
+		}
 		eventCh <- event
 	}
 	wg.Wait()
 
-	a.finalizeLLMSpanSuccess(llmSpan, len(message.ToolCalls))
+	if streamErr != "" {
+		a.recordLLMStreamError(llmSpan, streamErr)
+	} else {
+		a.finalizeLLMSpanSuccess(llmSpan, len(message.ToolCalls))
+	}
 
 	close(eventCh)
 	return message
