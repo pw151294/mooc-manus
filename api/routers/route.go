@@ -4,6 +4,7 @@ import (
 	"mooc-manus/api/handlers"
 	"mooc-manus/config"
 	app_svc "mooc-manus/internal/applications/services"
+	"mooc-manus/internal/domains/models/tracing"
 	domain_svc "mooc-manus/internal/domains/services"
 	"mooc-manus/internal/domains/services/agents"
 	"mooc-manus/internal/domains/services/flows"
@@ -58,7 +59,13 @@ func InitRouter() *gin.Engine {
 	skillVersionRepo := repositories.NewSkillVersionRepository()
 	taskExecutionRepo := repositories.NewTaskExecutionRepository()
 
-	// 1.3 FileStorage（基础设施，与 Repository 同级别）
+	// 1.3 Tracing 模块 Repository + 全局 Tracer 单例
+	aiSpanRepo := repositories.NewAiSpanRepository()
+	// tracing：初始化 Tracer 单例（异步 batch flush 落盘）
+	tracer := tracing.NewTracer(aiSpanRepo)
+	tracing.SetGlobal(tracer)
+
+	// 1.4 FileStorage（基础设施，与 Repository 同级别）
 	rootDir := "./data"
 	if config.Cfg != nil {
 		rootDir = config.Cfg.Storage.RootDir
@@ -128,6 +135,9 @@ func InitRouter() *gin.Engine {
 	a2aAppSvc := app_svc.NewA2AApplicationService(a2aDomainSvc)
 	baseFlowAppSvc := app_svc.NewFlowApplicationService(baseFlowDomainSvc)
 
+	// 3.4 Tracing 模块 Application Service
+	traceAppSvc := app_svc.NewTraceApplicationService(aiSpanRepo)
+
 	// ============================================================
 	// 第四层：Handler 层（全模块并列）
 	// ============================================================
@@ -143,6 +153,9 @@ func InitRouter() *gin.Engine {
 	agentHandler := handlers.NewAgentHandler(baseAgentAppSvc, a2aAppSvc)
 	flowHandler := handlers.NewFlowHandler(baseFlowAppSvc)
 
+	// 4.4 Tracing 模块 Handler
+	traceHandler := handlers.NewTraceHandler(traceAppSvc)
+
 	// ============================================================
 	// 路由注册
 	// ============================================================
@@ -156,6 +169,12 @@ func InitRouter() *gin.Engine {
 		statusAppSvc := app_svc.NewStatusApplicationService(checkers...)
 		statusHandler := handlers.NewStatusHandler(statusAppSvc)
 		status.GET("/status", statusHandler.Check)
+	}
+
+	trace := r.Group("/api")
+	{
+		trace.GET("/trace/:trace_id", traceHandler.GetDetail)
+		trace.GET("/traces", traceHandler.List)
 	}
 
 	appConfig := r.Group("/api/app/config")

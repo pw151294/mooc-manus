@@ -292,4 +292,47 @@ COMMENT ON COLUMN task_execution.progress IS '进度（0-100）';
 COMMENT ON COLUMN task_execution.ext_info IS '扩展信息（logs / skillCount / providerId / errorMessage 的 JSON）';
 COMMENT ON COLUMN task_execution.created_at IS '创建时间';
 COMMENT ON COLUMN task_execution.updated_at IS '更新时间';
+
+-- ============================================================
+-- 智能体链路追踪表（Agent Tracing）
+-- 关联 spec：docs/superpowers/specs/2026-07-14-agent-tracing-design.md
+-- ============================================================
+CREATE TABLE ai_span
+(
+    id              BIGSERIAL PRIMARY KEY,
+    trace_id        VARCHAR(64)  NOT NULL,
+    span_id         INTEGER      NOT NULL,
+    parent_span_id  INTEGER      NOT NULL,
+    span_type       VARCHAR(32)  NOT NULL,
+    operation_name  VARCHAR(128) NOT NULL DEFAULT '',
+    conversation_id VARCHAR(64)  NOT NULL DEFAULT '',
+    agent_name      VARCHAR(64)  NOT NULL DEFAULT '',
+    start_time      BIGINT       NOT NULL,
+    end_time        BIGINT       NOT NULL DEFAULT 0,
+    latency_ms      INTEGER      NOT NULL DEFAULT 0,
+    is_error        BOOLEAN      NOT NULL DEFAULT FALSE,
+    tags            JSONB,
+    logs            JSONB,
+    created_at      TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uk_trace_span UNIQUE (trace_id, span_id)
+);
+
+CREATE INDEX idx_ai_span_trace ON ai_span (trace_id);
+CREATE INDEX idx_ai_span_conv ON ai_span (conversation_id, created_at DESC);
+CREATE INDEX idx_ai_span_error ON ai_span (is_error, created_at DESC);
+
+COMMENT ON TABLE  ai_span                IS '智能体链路 span';
+COMMENT ON COLUMN ai_span.trace_id       IS '链路 ID = messageId';
+COMMENT ON COLUMN ai_span.span_id        IS 'trace 内自增，root=0';
+COMMENT ON COLUMN ai_span.parent_span_id IS 'root=-1';
+COMMENT ON COLUMN ai_span.span_type      IS 'AGENT_ROOT/AGENT_ROUND/LLM_CALL/TOOL_BATCH/TOOL_CALL/SUBAGENT_CALL';
+COMMENT ON COLUMN ai_span.operation_name IS 'tool 名（其他类型为空）';
+COMMENT ON COLUMN ai_span.conversation_id IS '会话 ID（冗余存独立列，便于筛选）';
+COMMENT ON COLUMN ai_span.agent_name     IS 'agent 名称';
+COMMENT ON COLUMN ai_span.start_time     IS '纳秒时间戳';
+COMMENT ON COLUMN ai_span.end_time       IS '纳秒时间戳';
+COMMENT ON COLUMN ai_span.latency_ms     IS '毫秒时延';
+COMMENT ON COLUMN ai_span.is_error       IS '当前 span 是否错误（不冒泡）';
+COMMENT ON COLUMN ai_span.tags           IS '扩展 kv';
+COMMENT ON COLUMN ai_span.logs           IS '过程日志 [{ts, level, msg, extra}]';
 COMMENT ON COLUMN task_execution.archived_at IS '归档时间（完成后 7 天可标记归档）';

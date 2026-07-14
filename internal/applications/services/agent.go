@@ -4,10 +4,12 @@ import (
 	"context"
 	"mooc-manus/internal/applications/dtos"
 	"mooc-manus/internal/domains/models/events"
+	agentmodels "mooc-manus/internal/domains/models/agents"
 	"mooc-manus/internal/domains/models/interrupt"
 	"mooc-manus/internal/domains/models/llm"
 	"mooc-manus/internal/domains/models/memory"
 	"mooc-manus/internal/domains/models/prompts"
+	"mooc-manus/internal/domains/models/tracing"
 	"mooc-manus/internal/domains/services/agents"
 	"mooc-manus/internal/domains/services/tools"
 	"mooc-manus/internal/infra/external/sse"
@@ -79,6 +81,33 @@ func (s *BaseAgentApplicationServiceImpl) cleanupNativeToolsByMessageID(messageI
 	}
 }
 
+// injectPlanModeIfNeeded 若 PlanMode 开启，注入规划提示词并启用子智能体（断点续跑靠 planDir 自动恢复）
+func (s *BaseAgentApplicationServiceImpl) injectPlanModeIfNeeded(clientRequest dtos.ChatClientRequest, request *agentmodels.ChatRequest) {
+	if !clientRequest.PlanMode || s.nativeToolsProvider == nil {
+		return
+	}
+	planDir := s.nativeToolsProvider.ConversationPlanDir(clientRequest.ConversationId)
+	planPrompt := strings.ReplaceAll(prompts.GetPlanModePrompt(), "{{PLAN_DIR}}", planDir)
+	request.SystemPrompt = request.SystemPrompt + "\n\n" + planPrompt
+	request.EnableSubagent = true
+	logger.Info("plan mode enabled, injected plan mode prompt",
+		zap.String("conversationId", clientRequest.ConversationId),
+		zap.String("planDir", planDir),
+	)
+}
+
+// startRootTracingSpan 开启 root span 并绑定基础 tag；tracer 未初始化时返回原 ctx + nil span
+func (s *BaseAgentApplicationServiceImpl) startRootTracingSpan(ctx context.Context, messageId, conversationId, userQuery string) (context.Context, *tracing.Span) {
+	tracer := tracing.Global()
+	if tracer == nil {
+		return ctx, nil
+	}
+	ctx, rootSpan := tracer.StartRootSpan(ctx, messageId)
+	rootSpan.SetConversationID(conversationId)
+	rootSpan.SetTag("user.query", userQuery)
+	return ctx, rootSpan
+}
+
 func (s *BaseAgentApplicationServiceImpl) Chat(clientRequest dtos.ChatClientRequest, writer http.ResponseWriter) {
 	if clientRequest.ConversationId == "" {
 		clientRequest.ConversationId = uuid.New().String()
@@ -87,17 +116,7 @@ func (s *BaseAgentApplicationServiceImpl) Chat(clientRequest dtos.ChatClientRequ
 	request := dtos.ConvertChatClientRequest2Request(clientRequest)
 	request.PendingSink = s // s 已实现 interrupt.PendingSink 接口（Task 11）
 
-	// PlanMode：注入规划提示词 + 断点续跑自动恢复
-	if clientRequest.PlanMode && s.nativeToolsProvider != nil {
-		planDir := s.nativeToolsProvider.ConversationPlanDir(clientRequest.ConversationId)
-		planPrompt := strings.ReplaceAll(prompts.GetPlanModePrompt(), "{{PLAN_DIR}}", planDir)
-		request.SystemPrompt = request.SystemPrompt + "\n\n" + planPrompt
-		request.EnableSubagent = true
-		logger.Info("plan mode enabled, injected plan mode prompt",
-			zap.String("conversationId", clientRequest.ConversationId),
-			zap.String("planDir", planDir),
-		)
-	}
+	s.injectPlanModeIfNeeded(clientRequest, &request)
 
 	messageId := sse.StartChat(writer, clientRequest.ConversationId)
 	request.MessageId = messageId // 注入 messageId 到 domain 层，用于 Skill 容器隔离
@@ -105,6 +124,14 @@ func (s *BaseAgentApplicationServiceImpl) Chat(clientRequest dtos.ChatClientRequ
 
 	// 创建可 cancel 的 context，用于停止按钮和超时兜底
 	ctx, cancel := context.WithCancel(context.Background())
+
+	ctx, rootSpan := s.startRootTracingSpan(ctx, messageId, clientRequest.ConversationId, clientRequest.Query)
+	defer func() {
+		if rootSpan != nil {
+			rootSpan.End()
+		}
+	}()
+
 	s.mu.Lock()
 	s.cancelFuncs[messageId] = cancel
 	s.mu.Unlock()
