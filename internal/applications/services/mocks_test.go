@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"sync"
 
 	"mooc-manus/internal/domains/models"
@@ -71,6 +72,10 @@ func (t *mockTool) Invoke(funcName, funcArgs string) models.ToolCallResult {
 		cb(funcName, funcArgs)
 	}
 	return t.invokeResult
+}
+
+func (t *mockTool) InvokeWithContext(_ context.Context, funcName, funcArgs string) models.ToolCallResult {
+	return t.Invoke(funcName, funcArgs)
 }
 
 func (t *mockTool) Init() error { return nil }
