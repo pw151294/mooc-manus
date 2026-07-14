@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"fmt"
 	"mooc-manus/internal/applications/dtos"
 	"mooc-manus/internal/domains/models/events"
 	agentmodels "mooc-manus/internal/domains/models/agents"
@@ -180,6 +181,10 @@ func (s *BaseAgentApplicationServiceImpl) Chat(clientRequest dtos.ChatClientRequ
 		case <-timer.C:
 			// 60s 无事件，超时兜底
 			logger.Warn("chat timeout: no event in 60 seconds", zap.String("messageId", messageId))
+			if rootSpan != nil {
+				rootSpan.AddLog("ERROR", "chat.timeout", map[string]interface{}{"seconds": 60})
+				rootSpan.SetError(fmt.Errorf("chat timeout: no event in 60 seconds"))
+			}
 			timeoutEvent := events.OnError("对话超时：60 秒无响应")
 			timeoutEvent.SaveConversationId(clientRequest.ConversationId)
 			timeoutEvent.SaveMessageId(messageId)
