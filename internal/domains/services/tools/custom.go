@@ -1,6 +1,8 @@
 package tools
 
 import (
+	"context"
+
 	"mooc-manus/internal/domains/models"
 )
 
@@ -21,4 +23,8 @@ func NewCustomTool(provider models.ToolProviderDO, functions []models.ToolFuncti
 func (c *CustomTool) Invoke(funcName, funcArgs string) models.ToolCallResult {
 	//TODO 待实现
 	panic("当前系统不支持自定义工具")
+}
+
+func (c *CustomTool) InvokeWithContext(ctx context.Context, funcName, funcArgs string) models.ToolCallResult {
+	return c.Invoke(funcName, funcArgs)
 }

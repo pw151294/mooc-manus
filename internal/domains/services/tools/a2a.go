@@ -80,6 +80,10 @@ func (a *A2ATool) Invoke(funcName, funcArgs string) models.ToolCallResult {
 	}
 }
 
+func (a *A2ATool) InvokeWithContext(ctx context.Context, funcName, funcArgs string) models.ToolCallResult {
+	return a.Invoke(funcName, funcArgs)
+}
+
 // Init todo 这里a2a服务还没启动 肯定无法resolve出agentcard 目前采取的方式是在getRemoteAgentCards的时候懒加载
 func (a *A2ATool) Init() error {
 	return nil

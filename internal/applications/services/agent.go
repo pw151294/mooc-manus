@@ -92,6 +92,7 @@ func (s *BaseAgentApplicationServiceImpl) Chat(clientRequest dtos.ChatClientRequ
 		planDir := s.nativeToolsProvider.ConversationPlanDir(clientRequest.ConversationId)
 		planPrompt := strings.ReplaceAll(prompts.GetPlanModePrompt(), "{{PLAN_DIR}}", planDir)
 		request.SystemPrompt = request.SystemPrompt + "\n\n" + planPrompt
+		request.EnableSubagent = true
 		logger.Info("plan mode enabled, injected plan mode prompt",
 			zap.String("conversationId", clientRequest.ConversationId),
 			zap.String("planDir", planDir),

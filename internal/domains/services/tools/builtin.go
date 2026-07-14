@@ -1,7 +1,10 @@
 package tools
 
 import (
+	"mooc-manus/internal/domains/models"
 	"mooc-manus/internal/domains/models/agents"
+	"mooc-manus/internal/domains/models/interrupt"
+	"mooc-manus/internal/domains/models/invoker"
 	"mooc-manus/internal/infra/external/file_storage"
 	"mooc-manus/internal/infra/repositories"
 )
@@ -46,4 +49,31 @@ func NativeTools(provider NativeToolsProvider, messageId, conversationId string)
 		return nil, nil
 	}
 	return provider.BuildTools(messageId, conversationId)
+}
+
+// SubagentTools 返回子智能体调度工具实例（单工具：dispatchSubagent）
+// 仅当启用子智能体功能时调用此方法
+// agentRunner 封装 BaseAgent 创建与执行逻辑，由 domain 层注入
+// parentEventCh 初始传 nil，运行时通过 SetParentEventCh 注入（见 BaseAgent.Invoke）
+func SubagentTools(
+	agentConfig models.AgentConfig,
+	inv invoker.Invoker,
+	baseTools []Tool,
+	pendingSink interrupt.PendingSink,
+	messageId string,
+	agentRunner AgentRunner,
+) ([]Tool, error) {
+	subagentTool := NewSubagentTool(
+		agentConfig,
+		inv,
+		baseTools,
+		pendingSink,
+		messageId,
+		nil, // parentEventCh 延迟注入
+		agentRunner,
+	)
+	if err := subagentTool.Init(); err != nil {
+		return nil, err
+	}
+	return []Tool{subagentTool}, nil
 }

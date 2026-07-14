@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -197,6 +198,10 @@ func (t *LoadSkillTool) Invoke(funcName, funcArgs string) models.ToolCallResult 
 	}
 
 	return models.ToolCallResult{Success: true, Data: string(contentBytes)}
+}
+
+func (t *LoadSkillTool) InvokeWithContext(ctx context.Context, funcName, funcArgs string) models.ToolCallResult {
+	return t.Invoke(funcName, funcArgs)
 }
 
 func (t *LoadSkillTool) getAvailableSkillNames() string {

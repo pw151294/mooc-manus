@@ -91,3 +91,7 @@ func (t *McpTool) Invoke(funcName, funcArgs string) models.ToolCallResult {
 	}
 	return result
 }
+
+func (t *McpTool) InvokeWithContext(ctx context.Context, funcName, funcArgs string) models.ToolCallResult {
+	return t.Invoke(funcName, funcArgs)
+}

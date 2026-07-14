@@ -3,6 +3,7 @@ package tools
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -154,6 +155,10 @@ func (t *FileReadTool) Invoke(funcName, funcArgs string) models.ToolCallResult {
 		zap.Int("limit", params.Limit),
 	)
 	return models.ToolCallResult{Success: true, Data: formatted}
+}
+
+func (t *FileReadTool) InvokeWithContext(ctx context.Context, funcName, funcArgs string) models.ToolCallResult {
+	return t.Invoke(funcName, funcArgs)
 }
 
 // resolveAbsPath 把用户传入的 path 规范为绝对路径

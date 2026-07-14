@@ -237,6 +237,25 @@ func (s *BaseAgentDomainServiceImpl) createBaseAgent(request agents.ChatRequest)
 		logger.Info("init native tools success", zap.Int("native_count", len(nativeTools)))
 	}
 
+	// 追加 SubagentTool（PlanMode 下启用子智能体）
+	if request.EnableSubagent {
+		agentRunner := buildAgentRunner()
+		subagentTools, err := tools.SubagentTools(
+			appConfig.AgentConfig,
+			inv,
+			baseTools,
+			request.PendingSink,
+			request.MessageId,
+			agentRunner,
+		)
+		if err != nil {
+			logger.Error("init subagent tools failed", zap.Error(err))
+			return nil, err
+		}
+		baseTools = append(baseTools, subagentTools...)
+		logger.Info("subagent tool injected", zap.String("messageId", request.MessageId))
+	}
+
 	// 构建系统提示词（拼接 Skill 元信息）
 	systemPrompt := request.SystemPrompt
 	if len(request.SkillRefs) > 0 {
@@ -319,4 +338,22 @@ You have access to the following skills.
 
 %s
 %s`, skillListBuilder.String(), skillUsageRules), nil
+}
+
+// buildAgentRunner 构造 AgentRunner，封装 BaseAgent 的创建和执行。
+// 子智能体拥有独立 ChatMemory，不与主智能体共享对话历史。
+func buildAgentRunner() tools.AgentRunner {
+	return func(ctx context.Context, cfg tools.AgentRunConfig, eventCh chan events.AgentEvent) {
+		mem := memory.NewChatMemory()
+		agent := NewBaseAgent(
+			cfg.AgentConfig,
+			cfg.Invoker,
+			mem,
+			cfg.Tools,
+			cfg.SystemPrompt,
+			WithMessageId(cfg.MessageId),
+			WithPendingSink(cfg.PendingSink),
+		)
+		agent.Invoke(ctx, cfg.Query, eventCh)
+	}
 }

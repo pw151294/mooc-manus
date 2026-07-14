@@ -1,6 +1,8 @@
 package tools
 
 import (
+	"context"
+
 	"mooc-manus/internal/domains/models"
 	"mooc-manus/internal/domains/models/llm"
 )
@@ -9,6 +11,7 @@ type Tool interface {
 	GetTools() []llm.Tool
 	HasTool(funcName string) bool
 	Invoke(funcName, funcArgs string) models.ToolCallResult
+	InvokeWithContext(ctx context.Context, funcName, funcArgs string) models.ToolCallResult
 	Init() error
 	ProviderName() string
 	SupportsRiskAssessment() bool // 【HITL 新增】true 表示该工具的 arguments 需要读 risk_level / risk_reason

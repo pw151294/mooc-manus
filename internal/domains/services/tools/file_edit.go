@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -177,6 +178,10 @@ func (t *FileEditTool) Invoke(funcName, funcArgs string) models.ToolCallResult {
 		Success: true,
 		Data:    fmt.Sprintf("Edited %s: %d replacement(s)", params.Path, replaced),
 	}
+}
+
+func (t *FileEditTool) InvokeWithContext(ctx context.Context, funcName, funcArgs string) models.ToolCallResult {
+	return t.Invoke(funcName, funcArgs)
 }
 
 // locateMatchLines 返回 needle 在 haystack 中出现位置的行号（1-based）前 limit 个

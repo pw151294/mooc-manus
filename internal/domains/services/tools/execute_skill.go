@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -223,6 +224,10 @@ func (t *ExecuteSkillTool) Invoke(funcName, funcArgs string) models.ToolCallResu
 	}
 
 	return models.ToolCallResult{Success: true, Data: message}
+}
+
+func (t *ExecuteSkillTool) InvokeWithContext(ctx context.Context, funcName, funcArgs string) models.ToolCallResult {
+	return t.Invoke(funcName, funcArgs)
 }
 
 // getAvailableSkillNames 辅助方法：返回可用 Skill 名称列表

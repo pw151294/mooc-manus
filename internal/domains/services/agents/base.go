@@ -92,6 +92,18 @@ func (a *BaseAgent) AddToMemory(messages []llm.Message) {
 	a.memory.AddMessages(messages)
 }
 
+// injectEventChToSubagent 将 eventCh 注入到 SubagentTool（如果存在）
+// 用于支持子智能体事件透传到主智能体事件流
+func (a *BaseAgent) injectEventChToSubagent(eventCh chan events.AgentEvent) {
+	for _, tool := range a.tools {
+		if subagentTool, ok := tool.(*tools.SubagentTool); ok {
+			subagentTool.SetParentEventCh(eventCh)
+			logger.Info("injected eventCh to SubagentTool")
+			return
+		}
+	}
+}
+
 // InvokeToolCalls 执行工具调用并采集ToolMessage 注：该方法不管在流式还是非流式的场景下都是阻塞调用的
 func (a *BaseAgent) InvokeToolCalls(ctx context.Context, toolCalls []llm.ToolCall, eventCh chan<- events.AgentEvent) []llm.Message {
 	toolMessages := make([]llm.Message, 0, len(toolCalls))
@@ -395,6 +407,8 @@ func (a *BaseAgent) InvokeLLM(messages []llm.Message) (llm.Message, error) {
 }
 
 func (a *BaseAgent) Invoke(ctx context.Context, query string, eventCh chan events.AgentEvent) {
+	// 注入 eventCh 到 SubagentTool（如果存在），以支持子智能体事件透传
+	a.injectEventChToSubagent(eventCh)
 	messages := []llm.Message{{Role: llm.RoleUser, Content: query}}
 	logger.Info("begin invoke llm", zap.Any("query", query))
 	message, err := a.InvokeLLM(messages)
@@ -441,6 +455,8 @@ func (a *BaseAgent) Invoke(ctx context.Context, query string, eventCh chan event
 
 // StreamingInvoke 在流式/非流式场景下该方法都是阻塞调用的
 func (a *BaseAgent) StreamingInvoke(ctx context.Context, query string, eventCh chan events.AgentEvent) {
+	// 注入 eventCh 到 SubagentTool（如果存在），以支持子智能体事件透传
+	a.injectEventChToSubagent(eventCh)
 	messages := []llm.Message{{Role: llm.RoleUser, Content: query}}
 	var wg sync.WaitGroup
 	var shouldEnd atomic.Bool

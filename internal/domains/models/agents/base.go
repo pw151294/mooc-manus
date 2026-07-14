@@ -23,6 +23,7 @@ type ChatRequest struct {
 	SkillRefs      []SkillRef
 	Files          []file.File
 	PlanMode       bool                  // 规划模式开关：开启后框架自动注入 PlanMode 提示词并实现记忆持久化
+	EnableSubagent bool                  // PlanMode 下启用子智能体功能
 	PendingSink    interrupt.PendingSink // HITL 审批管理器（由 application 层注入）
 }
 

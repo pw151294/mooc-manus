@@ -259,6 +259,10 @@ func (t *BashExecTool) Invoke(funcName, funcArgs string) models.ToolCallResult {
 	}
 }
 
+func (t *BashExecTool) InvokeWithContext(ctx context.Context, funcName, funcArgs string) models.ToolCallResult {
+	return t.Invoke(funcName, funcArgs)
+}
+
 // audit 把一次 bashExec 调用的元数据落到 native-bash-audit logger
 // denyName 非空表示该次调用被黑名单拒绝，没有真正 exec
 func (t *BashExecTool) audit(

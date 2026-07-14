@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"mooc-manus/internal/domains/models"
@@ -149,4 +150,8 @@ func (t *FileWriteTool) Invoke(funcName, funcArgs string) models.ToolCallResult 
 		Success: true,
 		Data:    fmt.Sprintf("File %s: %s (%d bytes)", action, params.Path, len(params.Content)),
 	}
+}
+
+func (t *FileWriteTool) InvokeWithContext(ctx context.Context, funcName, funcArgs string) models.ToolCallResult {
+	return t.Invoke(funcName, funcArgs)
 }

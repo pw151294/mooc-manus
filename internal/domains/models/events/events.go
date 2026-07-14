@@ -32,12 +32,13 @@ type StepEvent struct {
 type ToolEvent struct {
 	BaseEvent
 	Timestamp      time.Time              `json:"timestamp"`
-	ToolCallID     string                 `json:"tool_call_id"`    // 工具调用ID
-	ToolName       string                 `json:"tool_name"`       // 工具集(provider)名称
-	FunctionName   string                 `json:"function_name"`   // LLM调用的函数名称
-	FunctionArgs   string                 `json:"function_args"`   // LLM生成的工具调用参数
-	FunctionResult *models.ToolCallResult `json:"function_result"` // 工具调用结果
-	Status         ToolEventStatus        `json:"status"`          // 工具调用状态
+	ToolCallID     string                 `json:"tool_call_id"`       // 工具调用ID
+	ToolName       string                 `json:"tool_name"`          // 工具集(provider)名称
+	FunctionName   string                 `json:"function_name"`      // LLM调用的函数名称
+	FunctionArgs   string                 `json:"function_args"`      // LLM生成的工具调用参数
+	FunctionResult *models.ToolCallResult `json:"function_result"`    // 工具调用结果
+	Status         ToolEventStatus        `json:"status"`             // 工具调用状态
+	Metadata       map[string]interface{} `json:"metadata,omitempty"` // 扩展元数据（子智能体透传等）
 	// todo ToolContent    ToolContent            `json:"tool_content"`    // 工具扩展内容
 }
 
