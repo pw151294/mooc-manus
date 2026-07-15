@@ -11,7 +11,6 @@ package services
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -84,6 +83,7 @@ func findTag(s *tracing.Span, key string) (interface{}, bool) {
 //   - 1 个 AGENT_ROOT
 //   - 1 个 TOOL_BATCH（batch.tool_calls_count = 2）
 //   - 2 个 TOOL_CALL（tool.name = "dummy"）
+//
 // -----------------------------------------------------------------------------
 func TestChat_HappyPath_SpanStructure(t *testing.T) {
 	repo := &captureRepo{}
@@ -294,7 +294,7 @@ func TestStreamingInvokeLLM_StreamErrorMarksSpanError(t *testing.T) {
 }
 
 // TestChat_ContextCancel_RootSpanIsError
-// 用例：ctx cancel 后 root span 应标错（recordCtxCancelled 应 SetError）
+// 用例：ctx cancel 后 root span 应标错（recordCtxCancelled 应 MarkError）
 func TestChat_ContextCancel_RootSpanIsError(t *testing.T) {
 	repo := &captureRepo{}
 	tr := tracing.NewTracer(repo,
@@ -388,10 +388,10 @@ func (l *loopingInvoker) StreamingInvoke(_ []llm.Message, _ []llm.Tool, eventCh 
 }
 
 // TestChat_60sTimeout_RootSpanIsError
-// 用例：Application 60s 兜底超时应给 root span SetError
+// 用例：Application 60s 兜底超时应给 root span MarkError
 // 注：因 Application.Chat 需要完整 http mock（ResponseWriter + sse），
 // 这里以白盒方式复刻 agent.go:180-186 的 60s 分支埋点行为，验证 tracing API 语义。
-// 60s 分支的 SetError 已在 agent.go 主流程内落地，此测试保证 tracing 侧的可观测性契约。
+// 60s 分支的 MarkError 已在 agent.go 主流程内落地，此测试保证 tracing 侧的可观测性契约。
 func TestChat_60sTimeout_RootSpanIsError(t *testing.T) {
 	repo := &captureRepo{}
 	tr := tracing.NewTracer(repo,
@@ -406,9 +406,9 @@ func TestChat_60sTimeout_RootSpanIsError(t *testing.T) {
 
 	_, rootSpan := tr.StartRootSpan(context.Background(), "trace-timeout")
 
-	// 复刻 agent.go 60s 兜底分支：AddLog + SetError
+	// 复刻 agent.go 60s 兜底分支：AddLog + MarkError
 	rootSpan.AddLog("ERROR", "chat.timeout", map[string]interface{}{"seconds": 60})
-	rootSpan.SetError(fmt.Errorf("chat timeout: no event in 60 seconds"))
+	rootSpan.MarkError()
 	rootSpan.End()
 
 	if err := tr.Shutdown(context.Background()); err != nil {

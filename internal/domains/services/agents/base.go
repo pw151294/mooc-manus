@@ -386,14 +386,14 @@ func (a *BaseAgent) startToolCallSpan(ctx context.Context, toolCall llm.ToolCall
 
 // recordToolRepairFailed jsonrepair 修复失败的埋点
 func (a *BaseAgent) recordToolRepairFailed(toolSpan *tracing.Span, err error, errMsg string) {
-	toolSpan.SetError(err)
-	toolSpan.AddLog("ERROR", "tool.invoke.repair_failed", map[string]interface{}{"message": errMsg})
+	toolSpan.AddLog("ERROR", "tool.invoke.repair_failed", map[string]interface{}{"message": errMsg, "err": err.Error()})
+	toolSpan.MarkError()
 }
 
 // recordToolNotFound 找不到匹配 tool 时的埋点
 func (a *BaseAgent) recordToolNotFound(toolSpan *tracing.Span, errMsg string) {
-	toolSpan.SetError(errors.New(errMsg))
 	toolSpan.AddLog("ERROR", "tool.not_found", map[string]interface{}{"message": errMsg})
+	toolSpan.MarkError()
 }
 
 // recordToolHitlRequested HITL 风险审批闸门触发
@@ -405,8 +405,8 @@ func (a *BaseAgent) recordToolHitlRequested(toolSpan *tracing.Span, risk, reason
 
 // recordToolHitlRegisterFailed HITL Register 撞已有 pending 视为拒绝
 func (a *BaseAgent) recordToolHitlRegisterFailed(toolSpan *tracing.Span, err error) {
-	toolSpan.SetError(err)
 	toolSpan.AddLog("ERROR", "tool.hitl.register_failed", map[string]interface{}{"message": err.Error()})
+	toolSpan.MarkError()
 }
 
 // recordToolHitlCtxCancelled HITL 等待期间 ctx 被取消
@@ -461,7 +461,7 @@ func (a *BaseAgent) recordCtxCancelled(rootSpan *tracing.Span, round int, err er
 		"round": round,
 		"err":   err.Error(),
 	})
-	rootSpan.SetError(fmt.Errorf("agent context cancelled at round %d: %v", round, err))
+	rootSpan.MarkError()
 }
 
 // recordMaxIterationsExceeded 循环耗尽时记录里程碑并标错到 root span
@@ -469,7 +469,7 @@ func (a *BaseAgent) recordMaxIterationsExceeded(rootSpan *tracing.Span) {
 	rootSpan.AddLog("ERROR", "agent.max_iterations_exceeded", map[string]interface{}{
 		"max_iterations": a.agentConfig.MaxIterations,
 	})
-	rootSpan.SetError(fmt.Errorf("智能体思考轮次超过阈值：%d", a.agentConfig.MaxIterations))
+	rootSpan.MarkError()
 }
 
 // startLLMCallSpan 起 LLM_CALL span 并写入初始 tag / 请求发送日志
@@ -488,8 +488,8 @@ func (a *BaseAgent) recordLLMFirstToken(llmSpan *tracing.Span, eventType string)
 
 // recordLLMStreamError LLM 流式调用中途出错：从 error 事件中抽错并标到 span
 func (a *BaseAgent) recordLLMStreamError(llmSpan *tracing.Span, errMsg string) {
-	llmSpan.SetError(fmt.Errorf("llm stream error: %s", errMsg))
 	llmSpan.AddLog("ERROR", "llm.stream.error", map[string]interface{}{"message": errMsg})
+	llmSpan.MarkError()
 }
 
 // finalizeLLMSpanSuccess LLM 调用成功收尾：补 tool_calls_count tag + 完成日志
@@ -506,9 +506,10 @@ func (a *BaseAgent) recordLLMRetry(llmSpan *tracing.Span, attempt int, err error
 	})
 }
 
-// finalizeLLMSpanFailed LLM 调用最终失败：标错到 span
+// finalizeLLMSpanFailed LLM 调用最终失败：写错误日志 + 标红 span
 func (a *BaseAgent) finalizeLLMSpanFailed(llmSpan *tracing.Span, err error) {
-	llmSpan.SetError(err)
+	llmSpan.AddLog("ERROR", "llm.invoke.failed", map[string]interface{}{"err": err.Error()})
+	llmSpan.MarkError()
 }
 
 // injectInterventionIfNeeded 在进入 LLM 前检查是否有工具触发熔断阈值；若有则向 messages 追加一条用户角色的干预提示并返回新 slice。

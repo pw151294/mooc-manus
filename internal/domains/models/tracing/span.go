@@ -134,17 +134,14 @@ func (s *Span) AddLog(level, msg string, extra map[string]interface{}) {
 	})
 }
 
-func (s *Span) SetError(err error) {
-	if s == nil || err == nil {
+// MarkError 仅将 span 标记为出错状态；错误详情由调用方通过 AddLog 记录，
+// 保持单一职责，避免 MarkError + AddLog 双写同一份错误信息。
+func (s *Span) MarkError() {
+	if s == nil {
 		return
 	}
 	s.mu.Lock()
 	s.IsError = true
-	s.logs = append(s.logs, LogEntry{
-		Ts:    time.Now().UnixNano(),
-		Level: "ERROR",
-		Msg:   err.Error(),
-	})
 	s.mu.Unlock()
 }
 
