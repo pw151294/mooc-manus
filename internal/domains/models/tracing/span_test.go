@@ -1,7 +1,6 @@
 package tracing
 
 import (
-	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -66,12 +65,11 @@ func TestSpan_LongValueTruncation(t *testing.T) {
 	assert.LessOrEqual(t, len(v), MaxUserQueryBytes)
 }
 
-func TestSpan_SetError(t *testing.T) {
+func TestSpan_MarkError(t *testing.T) {
 	s := newTestSpan("t", 1, 0, SpanTypeToolCall, "fileRead")
-	s.SetError(errors.New("boom"))
+	s.MarkError()
 	assert.True(t, s.IsError)
-	assert.NotEmpty(t, s.logs)
-	assert.Equal(t, "ERROR", s.logs[len(s.logs)-1].Level)
+	assert.Empty(t, s.logs, "MarkError 不再自动写日志，错误详情由调用方 AddLog 记录")
 }
 
 func newTestSpan(traceID string, spanID, parentSpanID int32, spanType SpanType, opName string) *Span {
