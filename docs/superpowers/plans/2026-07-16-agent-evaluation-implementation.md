@@ -1572,7 +1572,7 @@ return 1
 - [ ] **Step 4: Commit**
 
 ```bash
-git commit -am "feat(eval): CaseTokenGate Redis Lua 令牌桶 + miniredis 单测 (M5.4)"
+git commit -am "feat(eval): CaseTokenGate Redis Lua 令牌桶 + miniredis 单测 (M5.3)"
 ```
 
 ---
@@ -1587,17 +1587,17 @@ git commit -am "feat(eval): CaseTokenGate Redis Lua 令牌桶 + miniredis 单测
 
 ```go
 type RunInstanceHandler struct {
-    executor evaluation.InstanceExecutor
-    caseGate CaseTokenGate // §5.4.1 令牌桶
-    workerID string
+    executor *InstanceExecutor                    // 具体类型；构造时 workerID 已注入到 struct 字段
+    instRepo repositories.EvalRunInstanceRepository // 用于查 case_id 走令牌桶
+    caseGate CaseTokenGate                          // §5.4.1 令牌桶
 }
 
 func (h *RunInstanceHandler) ProcessTask(ctx context.Context, task *asynq.Task) error {
     var p RunInstancePayload
     if err := json.Unmarshal(task.Payload(), &p); err != nil { return asynq.SkipRetry }
 
-    // 查实例拿 case_id
-    inst, err := h.executor.GetInstance(ctx, p.InstanceID)
+    // PlanReview-R2-B1 修复：直接走 repo 拿 instance（executor 只暴露 Execute 单参，不再对外提供 GetInstance）
+    inst, err := h.instRepo.GetByID(ctx, p.InstanceID)
     if err != nil { return asynq.SkipRetry }
 
     // 令牌桶
@@ -1608,10 +1608,15 @@ func (h *RunInstanceHandler) ProcessTask(ctx context.Context, task *asynq.Task) 
     }
     defer h.caseGate.Release(ctx, inst.CaseID)
 
-    // 执行
-    return h.executor.Execute(ctx, p.InstanceID, h.workerID)
+    // 执行：单参签名，workerID 已在 executor 构造时注入（见 Task 4.5.1 结构体字段）
+    return h.executor.Execute(ctx, p.InstanceID)
 }
 ```
+
+**接口契约（PlanReview-R2-B1 修复）**：
+- `InstanceExecutor.Execute(ctx, instanceID)` **单参**；`workerID / heartbeatInterval` 等运行时上下文挂在 struct 字段，在 M5.5 组装时 `NewInstanceExecutor(...deps..., workerID)` 一次性注入。
+- `RunInstanceHandler` 直接依赖 `EvalRunInstanceRepository`（M5.5 组装时注入），不通过 executor 反向查实例，避免 executor 暴露"读实例"接口。
+- Task 2.2 `EvaluationDomainService.ExecuteInstance(ctx, id, workerID)` 的语义：这是 domain service 对**外部**调用者（如管理端手动触发单实例执行、集成测）暴露的 API；内部实现是"构造一个临时 InstanceExecutor（用给定 workerID） + 调用 Execute(ctx, id)"。Asynq worker 走的是 M5.5 里预先注入好的常驻 executor，不经 domain service。
 
 `InstanceExecutor.Execute` 内部自己推 QUEUED → INITIALIZING → RUNNING → VERIFYING → 终态；panic 由 defer recover 转 FAILED。
 
@@ -1635,8 +1640,16 @@ git commit -am "feat(eval): Asynq RunInstanceHandler + 单测 (M5.3)"
 ```go
 if cfg.Evaluation.Enabled {
     asynqCli := mq.NewClient(cfg.Asynq)
+    workerID := hostname() + "-" + strconv.Itoa(os.Getpid())
+    executor := evaluation.NewInstanceExecutor(
+        instRepo, taskRepo, resultRepo, verifyRunner, chatRunner, aggregator,
+        tracer, skillExecutor, cfg.Evaluation.WorkspaceRoot,
+        workerID,
+        time.Duration(cfg.Evaluation.HeartbeatIntervalSec) * time.Second,
+        logger,
+    )
     evalDomain := evaluation.NewEvaluationDomainService(caseRepo, taskRepo, instRepo, resultRepo, snapRepo, executor, asynqCli)
-    handler := mq.NewRunInstanceHandler(executor, gate, hostname())
+    handler := mq.NewRunInstanceHandler(executor, instRepo, gate) // PlanReview-R2-B1：handler 直接持 instRepo
     srv, err := mq.StartServer(cfg.Asynq, cfg.Evaluation, handler)
     if err != nil { logger.Fatal(...) }
     // srv.Shutdown 挂到全局 shutdown hook
@@ -1973,6 +1986,17 @@ Reviewer 提出 8 项 Blocker + 12 项 Nice-to-have。以下为处理情况：
 | Blk8 | `/health` 端点不存在 | E-11 | 改用启动日志 + Redis KEYS 校验作为健康信号 |
 
 Nice-to-have 12 项：其中 N-3、N-6、N-9 已合并到对应 Blocker 修复内；余项作为实施阶段的敏捷回填点，不阻断进入 Round 2。
+
+## 附录 D: PlanReview 反馈响应清单（Round 2）
+
+Reviewer 复审确认 Blk1-Blk4/Blk6-Blk8 全部修复到位；找到 1 项新的 Blocker（Blk5 拆分遗留 —— executor 与 handler 签名不一致）。
+
+| # | 位置 | 处理 |
+|---|---|---|
+| R2-B1 | Task 5.4 handler 调用 executor 签名不匹配 | executor 保持单参 `Execute(ctx, instanceID)`，workerID 挂 struct 字段；handler 直接持 `instRepo` 走 repo 拿 case_id，不经 executor；Task 2.2 `ExecuteInstance(ctx, id, workerID)` 语义定为"外部触发单实例，内部构造临时 executor"，与 Asynq worker 走的常驻 executor 明确区隔 |
+| R2-N1 | Task 5.3 commit message 尾巴 `(M5.4)` | 拼写修正为 `(M5.3)` |
+
+Round 2 无其他阻塞。
 
 ---
 
