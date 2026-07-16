@@ -148,7 +148,7 @@ git commit -m "feat(eval): 新增 evaluation 域模型 DO 与状态枚举 (M1.1)
 - Create: `internal/infra/models/eval_run_instance.go`
 - Create: `internal/infra/models/eval_result.go`
 - Create: `internal/infra/models/eval_agent_snapshot.go`
-- Modify: `internal/infra/db/migrate.go`（若无此文件，找到 `AutoMigrate` 调用点，通常在 `db/init.go` 或 `bootstrap` 内）
+- Modify: `internal/infra/storage/postgres.go`（**PlanReview-Blk3 修复**：项目目前没有集中 AutoMigrate 入口，各表靠外部 SQL 建。本任务在 `InitStorage()` 尾部新增集中式 AutoMigrate 段，只处理评测 5 表；不动其它历史表，规避对 `ai_span` 等既有表的隐式变更。）
 
 - [ ] **Step 1: 写 5 张 PO struct，严格按 spec §2 字段与索引**
 
@@ -200,21 +200,22 @@ func (EvalRunInstancePO) TableName() string { return "eval_run_instance" }
     AgentConfigSnapshotID string `gorm:"...;uniqueIndex:uk_task_case_snap,priority:3"`
 ```
 
-- [ ] **Step 2: 找到 AutoMigrate 调用点并注册 5 张 PO**
-
-```bash
-grep -RIn "AutoMigrate" internal/infra/ config/ bootstrap/ | head
-```
-
-在既有 `AutoMigrate(...)` 参数里追加：
+- [ ] **Step 2: 在 `storage/postgres.go: InitStorage()` 尾部追加集中式 AutoMigrate**
 
 ```go
-&models.EvalCasePO{},
-&models.EvalTaskPO{},
-&models.EvalRunInstancePO{},
-&models.EvalResultPO{},
-&models.EvalAgentSnapshotPO{},
+// 落在 sqlDB = db 之后
+if err := db.AutoMigrate(
+    &models.EvalCasePO{},
+    &models.EvalTaskPO{},
+    &models.EvalAgentSnapshotPO{},  // instance FK 依赖 snapshot，snapshot 先建
+    &models.EvalRunInstancePO{},
+    &models.EvalResultPO{},         // result FK 依赖 instance
+); err != nil {
+    return fmt.Errorf("eval AutoMigrate: %w", err)
+}
 ```
+
+**建表顺序**：snapshot / task 无外键出边，先建；`eval_run_instance` FK 到 snapshot + task，中间建；`eval_result` FK 到 instance，最后建。GORM 会自动按依赖排序，此处显式列顺序仅为可读性。
 
 - [ ] **Step 3: GIN 索引 post-hook**
 
@@ -241,14 +242,16 @@ git commit -m "feat(eval): 新增 5 张 eval_* PO 与 AutoMigrate 注册 (M1.2)"
 
 ---
 
-### Task 1.3: 定义 Repository 接口（Domain 层）
+### Task 1.3: 定义 Repository 接口（放在 `internal/infra/repositories/` 内，与既有习惯对齐）
+
+**架构说明（PlanReview-Blk1 修复）**：项目现状是接口 + 实现全部放在 `internal/infra/repositories/`（对齐 `app_config.go:12` 现有做法）。本计划遵循现状，不在 `internal/domains/repositories/` 建新目录以免风格分裂；接口与实现放同 package，仅通过文件分离。
 
 **Files:**
-- Create: `internal/domains/repositories/eval_case_repository.go`
-- Create: `internal/domains/repositories/eval_task_repository.go`
-- Create: `internal/domains/repositories/eval_run_instance_repository.go`
-- Create: `internal/domains/repositories/eval_result_repository.go`
-- Create: `internal/domains/repositories/eval_agent_snapshot_repository.go`
+- Create: `internal/infra/repositories/eval_case.go`（接口 + 结构，同文件；实现在 Task 1.4）
+- Create: `internal/infra/repositories/eval_task.go`
+- Create: `internal/infra/repositories/eval_run_instance.go`
+- Create: `internal/infra/repositories/eval_result.go`
+- Create: `internal/infra/repositories/eval_agent_snapshot.go`
 
 - [ ] **Step 1: 定义 5 个接口**
 
@@ -259,7 +262,7 @@ package repositories
 
 import (
     "context"
-    "github.com/xxx/mooc-manus/internal/domains/models/evaluation"
+    "mooc-manus/internal/domains/models/evaluation"
 )
 
 type EvalCaseRepository interface {
@@ -294,7 +297,7 @@ type CaseListFilter struct {
 - [ ] **Step 2: Commit**
 
 ```bash
-git add internal/domains/repositories/
+git add internal/infra/repositories/eval_*.go
 git commit -m "feat(eval): 新增 5 个 Repository 接口定义 (M1.3)"
 ```
 
@@ -303,13 +306,9 @@ git commit -m "feat(eval): 新增 5 个 Repository 接口定义 (M1.3)"
 ### Task 1.4: Repository GORM 实现 + 转换函数 + 单测
 
 **Files:**
-- Create: `internal/infra/repositories/eval_case_repository.go`
-- Create: `internal/infra/repositories/eval_task_repository.go`
-- Create: `internal/infra/repositories/eval_run_instance_repository.go`
-- Create: `internal/infra/repositories/eval_result_repository.go`
-- Create: `internal/infra/repositories/eval_agent_snapshot_repository.go`
+- Modify: 1.3 创建的 5 个文件，追加对应的 `*Impl` 结构体与方法
 - Create: `internal/infra/repositories/eval_converter.go`（PO ↔ DO 双向转换）
-- Test: `internal/infra/repositories/eval_run_instance_repository_test.go`（选一个最复杂的做示范，其余 CRUD 类的走集成测覆盖）
+- Test: `internal/infra/repositories/eval_run_instance_test.go`（选最复杂的做示范，其余 CRUD 类的走集成测覆盖）
 
 - [ ] **Step 1: 写 `eval_converter.go`**
 
@@ -691,17 +690,87 @@ git commit -m "feat(llm): 新增 Usage 值对象 + 脱敏正则守护测试 (M3.
 
 ---
 
-### Task 3.2: Invoker 接口签名扩容
+### Task 3.2.a: 底层 SDK 层暴露 Usage（不改 Domain 接口，可编译）
+
+**PlanReview-Blk6 说明**：一次性改接口 + 5 处调用 + 全项目 mock 太大，中断后留半成品。分 3 步走。
+
+**Files:**
+- Modify: `internal/infra/external/llm/openai.go`
+- Modify: `internal/infra/external/llm/anthropic.go`（若存在，或对应文件名）
+- Modify: `internal/infra/external/llm/openai_adapter.go`
+- Modify: `internal/infra/external/llm/anthropic_adapter.go`
+
+- [ ] **Step 1: 底层 SDK 包装器返回 SDK 原生 Usage 类型**
+
+（infra 层，直接用 SDK 类型无需 domain 映射）
+
+```go
+// openai.go
+func (l *OpenAiLLM) StreamingInvoke(msgs, tools) (openai.ChatCompletionMessage, openai.CompletionUsage) {
+    acc := openai.ChatCompletionAccumulator{}
+    // ...原逻辑不变...
+    return acc.Choices[0].Message, acc.Usage
+}
+func (l *OpenAiLLM) Invoke(msgs, tools) (openai.ChatCompletionMessage, openai.CompletionUsage, error) {
+    resp, err := l.client.ChatCompletion(...)
+    if err != nil { return openai.ChatCompletionMessage{}, openai.CompletionUsage{}, err }
+    return resp.Choices[0].Message, resp.Usage, nil
+}
+```
+
+Anthropic 同理，SDK 有 `Usage.InputTokens/OutputTokens`。
+
+- [ ] **Step 2: Adapter 内部先把 Usage 记在实例字段（不改 Adapter 对外接口）**
+
+```go
+// openai_adapter.go
+type OpenAIAdapter struct {
+    llm         *OpenAiLLM
+    lastUsage   domainllm.Usage  // 新增：最近一次调用的 usage，供上层 getter 读取
+    lastUsageMu sync.Mutex
+}
+
+func (a *OpenAIAdapter) StreamingInvoke(msgs []domainllm.Message, tools []domainllm.Tool, eventCh chan<- events.AgentEvent) domainllm.Message {
+    resp, sdkUsage := a.llm.StreamingInvoke(toSDKMsgs(msgs), toSDKTools(tools))
+    a.lastUsageMu.Lock()
+    a.lastUsage = domainllm.Usage{
+        PromptTokens:     sdkUsage.PromptTokens,
+        CompletionTokens: sdkUsage.CompletionTokens,
+        TotalTokens:      sdkUsage.TotalTokens,
+    }
+    a.lastUsageMu.Unlock()
+    return fromSDKMessage(resp)
+}
+
+// 新增 getter，方便 base.go 在同一 goroutine 内取
+func (a *OpenAIAdapter) LastUsage() domainllm.Usage {
+    a.lastUsageMu.Lock(); defer a.lastUsageMu.Unlock()
+    return a.lastUsage
+}
+```
+
+Anthropic Adapter 加同样字段与 getter。
+
+- [ ] **Step 3: `go build ./... && go test ./internal/...` 全绿** —— 因为 Adapter 对外接口未变，旧 mock 与调用点无需改动。
+
+- [ ] **Step 4: Commit**
+
+```bash
+git commit -am "refactor(llm): Adapter 内部持有最近一次调用 Usage (M3.2.a)"
+```
+
+---
+
+### Task 3.2.b: 扩 Invoker 接口签名 + 平推 base.go 与 mock
 
 **Files:**
 - Modify: `internal/domains/models/invoker/invoker.go`
-- Modify: `internal/infra/external/llm/openai.go`
 - Modify: `internal/infra/external/llm/openai_adapter.go`
 - Modify: `internal/infra/external/llm/anthropic_adapter.go`
 - Modify: `internal/domains/services/agents/base.go`
-- Modify: 相关单测 mock（`grep -RIn "invoker.Invoker" internal/ --include="*_test.go"`）
+- Modify: 所有 mock（`grep -RIn "invoker.Invoker" internal/ --include="*_test.go"`）
 
-- [ ] **Step 1: 改 `invoker.go` 接口签名**
+- [ ] **Step 1: 改 `invoker.go` 接口签名，加 Usage 返回**
 
 ```go
 type Invoker interface {
@@ -710,50 +779,30 @@ type Invoker interface {
 }
 ```
 
-- [ ] **Step 2: 改 `OpenAiLLM.StreamingInvoke` 与 `Invoke` 补 Usage 返回**
-
-原实现里 `acc := openai.ChatCompletionAccumulator{}`；流结束时读 `acc.Usage.PromptTokens / CompletionTokens / TotalTokens`。若 accumulator 未提供 Usage（早期 SDK），退化用 `openai.CompletionUsage` 从最后一个 chunk 拿。
+- [ ] **Step 2: 把 Adapter 的 getter 直接改成接口返回**
 
 ```go
-func (l *OpenAiLLM) StreamingInvoke(...) (openai.ChatCompletionMessage, openai.CompletionUsage) {
-    // ... 原逻辑 ...
-    return acc.Choices[0].Message, acc.Usage
+func (a *OpenAIAdapter) StreamingInvoke(...) (domainllm.Message, domainllm.Usage) {
+    // ...原有逻辑写 lastUsage 后...
+    return fromSDKMessage(resp), a.lastUsage
 }
 ```
 
-`Invoke` 同理，从 `resp.Usage` 取。
+删掉 `LastUsage()` getter（YAGNI，已换成正式接口）。
 
-- [ ] **Step 3: 改 `openai_adapter.go` 映射**
+- [ ] **Step 3: 改 `base.go` 两处调用点**
 
-```go
-func (a *OpenAIAdapter) StreamingInvoke(messages []domainllm.Message, tools []domainllm.Tool, eventCh chan<- events.AgentEvent) (domainllm.Message, domainllm.Usage) {
-    resp, usage := a.llm.StreamingInvoke(...)
-    return fromOpenAIMessage(resp), domainllm.Usage{
-        PromptTokens:     usage.PromptTokens,
-        CompletionTokens: usage.CompletionTokens,
-        TotalTokens:      usage.TotalTokens,
-    }
-}
-```
-
-`Invoke` 同理。
-
-- [ ] **Step 4: 改 `anthropic_adapter.go`**
-
-从 SDK 最终响应 `Usage.InputTokens/OutputTokens` 取；`TotalTokens = InputTokens + OutputTokens`。SDK 未返回时填 0 + `logger.Warn("anthropic usage empty")`。
-
-- [ ] **Step 5: 改 `base.go` 两处调用点**
-
-`StreamingInvokeLLM` (`base.go:552`)：
+`StreamingInvokeLLM` (`base.go:552` 附近；执行前先 `grep -n "StreamingInvoke" internal/domains/services/agents/base.go` 定位实际行号)：
 
 ```go
+var invokerUsage llm.Usage
 go func() {
     msg, usage := a.invoker.StreamingInvoke(a.GetMessages(), availableTools, llmEventCh)
     message = msg
-    invokerUsage = usage // 新增局部变量
-    // ... 原逻辑 ...
+    invokerUsage = usage
+    // ...原逻辑不变...
 }()
-// ... 原逻辑收敛后 ...
+// 收敛后：
 if streamErr != "" {
     a.recordLLMStreamError(llmSpan, streamErr)
 } else {
@@ -761,9 +810,44 @@ if streamErr != "" {
 }
 ```
 
-`InvokeLLM`（`base.go:596`）：`msg, usage, err := a.invoker.Invoke(...)`；成功分支下调用 `finalizeLLMSpanSuccess(llmSpan, len(msg.ToolCalls), usage)`。
+`InvokeLLM`：`msg, usage, err := a.invoker.Invoke(...)`；成功时 `finalizeLLMSpanSuccess(llmSpan, len(msg.ToolCalls), usage)`。
 
-- [ ] **Step 6: 改 `finalizeLLMSpanSuccess` 签名 + span 写入**
+- [ ] **Step 4: 一次性平推所有 mock**
+
+```bash
+grep -RIn "invoker.Invoker\|StreamingInvoke\|Invoke(" internal/ --include="*_test.go"
+```
+
+每处 mock 补返回值：非流 `return llm.Message{...}, llm.Usage{}, nil`；流式 `return llm.Message{...}, llm.Usage{}`。
+
+- [ ] **Step 5: 全量 build + test**
+
+```bash
+go build ./...
+go test ./internal/... -count=1
+```
+
+Expected: 全绿。若有旧测试挂了，就是签名平推漏了，逐个补。此步不允许留半成品。
+
+- [ ] **Step 6: Commit**
+
+```bash
+git commit -am "refactor(llm): Invoker 接口扩容 Usage 返回 + 平推 base.go/mock (M3.2.b)"
+```
+
+---
+
+### Task 3.2.c: base.go 写入 llm.usage.* span tag + 集成测
+
+**Files:**
+- Modify: `internal/domains/services/agents/base.go`（改 `finalizeLLMSpanSuccess` 签名）
+- Modify/Create: `internal/applications/services/agent_tracing_integration_test.go`
+
+- [ ] **Step 1: 写失败集成测**
+
+mock Invoker 返回 `Usage{Prompt:100, Completion:50, Total:150}`；跑完从 `AiSpanPO.Tags` 里读三 tag 键值，断言 == 100/50/150；此刻应 FAIL 因为 base.go 未写 tag。
+
+- [ ] **Step 2: 改 `finalizeLLMSpanSuccess`**
 
 ```go
 func (a *BaseAgent) finalizeLLMSpanSuccess(llmSpan *tracing.Span, toolCallsCount int, usage llm.Usage) {
@@ -775,32 +859,12 @@ func (a *BaseAgent) finalizeLLMSpanSuccess(llmSpan *tracing.Span, toolCallsCount
 }
 ```
 
-- [ ] **Step 7: 修 mock**
+- [ ] **Step 3: 跑集成测 → PASS**
+
+- [ ] **Step 4: Commit**
 
 ```bash
-grep -RIn "invoker.Invoker\|StreamingInvoke\b" internal/ --include="*_test.go"
-```
-
-对每处 mock 实现补返回值：`return llm.Message{...}, llm.Usage{}, nil`（或 `return llm.Message{...}, llm.Usage{}` for 流式）。
-
-- [ ] **Step 8: 全量 build + test**
-
-```bash
-go build ./...
-go test ./internal/... -count=1
-```
-
-Expected: PASS，全部通过。若有旧测试挂了，是签名迁移漏了，逐个补。
-
-- [ ] **Step 9: 增补集成测：模拟 LLM 返回带 Usage，验证 span tag 落到 DB**
-
-在 `internal/applications/services/agent_tracing_integration_test.go` 里扩展一个新用例：mock Invoker 返回 `Usage{Prompt:100, Completion:50, Total:150}`；跑完读 `AiSpanPO.Tags`，断言三 tag 键值。
-
-- [ ] **Step 10: Commit**
-
-```bash
-git add internal/domains/models/invoker/ internal/infra/external/llm/ internal/domains/services/agents/base.go internal/applications/services/
-git commit -m "refactor(llm): Invoker 接口签名扩容 Usage 返回 + span 写入 token tag (M3.2)"
+git commit -am "feat(llm): LLM_CALL span 写入 llm.usage.* + 集成测 (M3.2.c)"
 ```
 
 ---
@@ -877,7 +941,12 @@ func (r *VerifyRunner) Run(ctx context.Context, workdir, script string) (*Verify
     defer cancel()
     cmd := exec.CommandContext(ctx2, "bash", path)
     cmd.Dir = workdir
-    cmd.Env = []string{"PATH="+os.Getenv("PATH"), "HOME="+os.Getenv("HOME"), "LANG=C.UTF-8"}
+    // PlanReview-Blk7 修复 spec §11 风险 6：白名单 env，不继承宿主机（cmd.Env=nil 会继承所有环境变量）
+    cmd.Env = []string{
+        "PATH=" + os.Getenv("PATH"),
+        "HOME=" + os.Getenv("HOME"),
+        "LANG=C.UTF-8",
+    }
 
     var outBuf, errBuf capBuffer
     outBuf.limit = r.cap; errBuf.limit = r.cap
@@ -989,35 +1058,55 @@ type InternalChatResult struct {
 }
 ```
 
-- [ ] **Step 2: 实现 —— 复用 `BaseAgentDomainService.Chat`**
+- [ ] **Step 2: 先落 snapshot 桥接（PlanReview-Blk4 修复）**
+
+评测必须以 snapshot 为准，不能走 appConfig 活对象。做法：`AgentSnapshot` 加方法 `ToAppConfig() *appconfig.AppConfig`，把 snapshot 5 大字段拷贝成一个瞬态 AppConfig 值对象。在 `BaseAgentDomainServiceImpl.createBaseAgent(request)` 内的入口处加一个可选注入路径：
 
 ```go
+// internal/domains/services/agents/agent.go
+type ChatRequest struct {
+    // ... 原字段 ...
+    ConfigOverride *appconfig.AppConfig // 新增，非空时优先于 AppConfigId 查询
+}
+```
+
+在 `createBaseAgent` 里检查 `if request.ConfigOverride != nil { cfg = request.ConfigOverride }`，否则走原有 `AppConfigRepository.Get(request.AppConfigId)`。这一改动是**评测能否可回溯**的核心保证。
+
+写单测：`TestBaseAgent_ConfigOverride_Wins`，断言 override 优先于 AppConfigId。
+
+- [ ] **Step 3: 实现 InternalChatRunner —— 复用 BaseAgentDomainService.Chat**
+
+```go
+type internalChatRunnerImpl struct {
+    baseAgent agents.BaseAgentDomainService
+}
+
 func (r *internalChatRunnerImpl) Run(ctx context.Context, req InternalChatReq) (InternalChatResult, error) {
     ctx2, cancel := context.WithTimeout(ctx, req.TotalTimeout)
     defer cancel()
 
     eventCh := make(chan events.AgentEvent, 64)
-    chatReq := agents.ChatRequest{
-        Streaming: true,
-        SystemPrompt: req.Snapshot.SystemPrompt,
+    chatReq := agentmdl.ChatRequest{
+        Streaming:      true,
+        SystemPrompt:   req.Snapshot.SystemPrompt,
         ConversationId: req.ConversationID,
-        MessageId: req.MessageID,
-        Query: req.Query,
-        AppConfigId: req.Snapshot.SourceAppConfigID, // 走复用；但配置以 snapshot 为准 —— 需在 domain service 里桥接一层从 snapshot 构造 config，见 §4.4.3
+        MessageId:      req.MessageID,
+        Query:          req.Query,
+        AppConfigId:    req.Snapshot.SourceAppConfigID,       // 仅作追溯记录
+        ConfigOverride: req.Snapshot.ToAppConfig(),           // ← 评测语义关键：以 snapshot 为准
     }
+
+    // Chat 无返回值，异步跑；由内部 close(eventCh) 收敛
+    go r.baseAgent.Chat(ctx2, chatReq, eventCh)
 
     var lastMsg string
     var errFromStream error
-    go func() {
-        _ = r.baseAgent.Chat(ctx2, chatReq, eventCh) // Chat 内部 close(eventCh)
-    }()
-
     for {
         select {
         case <-ctx2.Done():
             return InternalChatResult{DidTimeout: true}, nil
         case ev, ok := <-eventCh:
-            if !ok { // close(eventCh) 即智能体收敛
+            if !ok {
                 return InternalChatResult{Error: errFromStream, LastAssistantMsg: lastMsg}, nil
             }
             switch v := ev.(type) {
@@ -1031,7 +1120,10 @@ func (r *internalChatRunnerImpl) Run(ctx context.Context, req InternalChatReq) (
 }
 ```
 
-**注意**：`BaseAgentDomainService.Chat` 会从 `AppConfigRepository` 查 appConfig 活对象。评测这里需要用 snapshot 覆盖 —— 在 M4 阶段先允许"评测直接走活对象"跑通链路；M9 前补一个 `snapshotAsAppConfig` 桥接，让 domain 服务优先接受 snapshot（改动仅在 `createBaseAgent` 内加一个 `if req.Snapshot != nil { cfg = req.Snapshot.ToAppConfig() }` 分支）。
+**签名/字段核对清单**（进 build 前 grep 一次）：
+- `agents.BaseAgentDomainService.Chat(ctx, ChatRequest, chan events.AgentEvent)` 无返回值
+- `ChatRequest` 字段名以 `internal/domains/models/agents/base.go:14` 为准（`ConversationId` 而非 `ConversationID`，注意大小写）
+- `events.MessageEvent` / `events.ErrorEvent` 具体类型名以 `internal/domains/models/events/*.go` 为准
 
 - [ ] **Step 3: 写测试** —— mock `baseAgent` 输出 3 个事件后 close(eventCh)，验证 runner 正常返回；再造一个 mock "永不 close"，验证 15min 后 DidTimeout=true。
 
@@ -1043,93 +1135,106 @@ git commit -am "feat(eval): InternalChatRunner 复用 BaseAgent + eventCh close 
 
 ---
 
-### Task 4.5: InstanceExecutor（把 4.1-4.4 编排起来）
+### Task 4.5.1: InstanceExecutor 骨架 + 状态 CAS 环节（TDD）
 
 **Files:**
 - Create: `internal/domains/services/evaluation/executor.go`
-- Test: `internal/domains/services/evaluation/executor_test.go`
+- Test: `internal/domains/services/evaluation/executor_cas_test.go`
 
-- [ ] **Step 1: ExecuteInstance 主流程**
+**PlanReview-Blk5 说明**：原 4.5 一次落 12 步太大。拆成 4 个子任务，每个专注一环。
+
+- [ ] **Step 1: 写失败测试** —— 用 mock instRepo，验证 Execute(ctx, id) 在 QUEUED 状态下先做 CAS QUEUED→INITIALIZING；CAS 失败返回 nil（跳过而非 error）。
+
+- [ ] **Step 2: 实现 struct + 构造函数 + CAS 环节**
 
 ```go
+type InstanceExecutor struct {
+    instRepo      repositories.EvalRunInstanceRepository
+    taskRepo      repositories.EvalTaskRepository
+    resultRepo    repositories.EvalResultRepository
+    verifyRunner  *VerifyRunner
+    chatRunner    InternalChatRunner
+    aggregator    *TraceAggregator
+    tracer        tracing.Tracer
+    skillExecutor tools.SkillExecutor    // 拿 CleanupMessage（签名: CleanupMessage(messageID string) error）
+    workspaceRoot string                 // 拼 workdir 用
+    workerID      string
+    heartbeatInterval time.Duration
+    logger        *zap.Logger
+}
+
 func (e *InstanceExecutor) Execute(ctx context.Context, instanceID string) error {
-    inst, err := e.instRepo.GetByID(ctx, instanceID)
+    ok, err := e.instRepo.CASStatus(ctx, instanceID, ev.InstanceStatusQueued, ev.InstanceStatusInitializing)
     if err != nil { return err }
-
-    // 1. QUEUED → INITIALIZING CAS
-    ok, _ := e.instRepo.CASStatus(ctx, instanceID, ev.InstanceStatusQueued, ev.InstanceStatusInitializing)
-    if !ok { return errors.New("CAS 失败，跳过") }
-
-    // 2. deadline_at + started_at + worker_id + heartbeat 心跳启动
-    e.startHeartbeat(ctx, instanceID)
-
-    // 3. 跑 init_script（若非空）
-    if inst.CaseSnapshot.InitScript != "" {
-        workdir := e.buildWorkspace(inst.ConversationID, inst.MessageID)
-        r, err := e.verifyRunner.Run(ctx, workdir, inst.CaseSnapshot.InitScript)
-        if err != nil || r.ExitCode != 0 {
-            e.finalize(ctx, instanceID, ev.InstanceStatusFailed, "init_script failed: "+r.Stderr, nil)
-            return nil
-        }
-    }
-
-    // 4. INITIALIZING → RUNNING
-    _, _ = e.instRepo.CASStatus(ctx, instanceID, ev.InstanceStatusInitializing, ev.InstanceStatusRunning)
-
-    // 5. InternalChatRunner
-    res, err := e.chatRunner.Run(ctx, InternalChatReq{...})
-    if res.DidTimeout {
-        e.finalize(ctx, instanceID, ev.InstanceStatusTimeout, "agent_timeout", nil); return nil
-    }
-    if res.Error != nil {
-        e.finalize(ctx, instanceID, ev.InstanceStatusFailed, res.Error.Error(), nil); return nil
-    }
-
-    // 6. RUNNING → VERIFYING
-    _, _ = e.instRepo.CASStatus(ctx, instanceID, ev.InstanceStatusRunning, ev.InstanceStatusVerifying)
-
-    // 7. verify_script
-    workdir := e.buildWorkspace(inst.ConversationID, inst.MessageID)
-    vres, verr := e.verifyRunner.Run(ctx, workdir, inst.CaseSnapshot.VerifyScript)
-    passed := verr == nil && vres.ExitCode == 0
-
-    // 8. tracer flush + 等 200ms + 聚合指标
-    e.tracer.Flush()
-    time.Sleep(200 * time.Millisecond)
-    metrics, _ := e.aggregator.Aggregate(ctx, inst.ConversationID)
-
-    // 9. 写 result
-    result := &ev.Result{
-        InstanceID: instanceID,
-        Passed: passed,
-        VerifyExitCode: vres.ExitCode, VerifyStdout: vres.Stdout, VerifyStderr: vres.Stderr,
-        PromptTokens: metrics.PromptTokens,
-        CompletionTokens: metrics.CompletionTokens,
-        TotalTokens: metrics.TotalTokens,
-        AgentLatencyMs: metrics.AgentLatencyMs,
-        FinishedAt: time.Now(),
-    }
-    if !passed {
-        result.ErrorLog = firstNonEmpty(vres.Stderr, "verify_exit_"+strconv.Itoa(vres.ExitCode))
-    }
-    _ = e.resultRepo.Create(ctx, result)
-
-    // 10. 回填 trace_id
-    _ = e.instRepo.UpdateTraceID(ctx, instanceID, metrics.TraceID)
-
-    // 11. 终态 CAS + 推进 task
-    targetStatus := ev.InstanceStatusPassed
-    if !passed { targetStatus = ev.InstanceStatusFailed }
-    _, _ = e.instRepo.CASStatus(ctx, instanceID, ev.InstanceStatusVerifying, targetStatus)
-    _ = e.taskRepo.RecountAndTransit(ctx, inst.TaskID)
-
-    // 12. CleanupMessage
-    e.cleaner.CleanupMessage(inst.ConversationID, inst.MessageID)
+    if !ok { e.logger.Warn("CAS QUEUED->INITIALIZING 失败", zap.String("id", instanceID)); return nil }
+    // 后续在 4.5.2 填
     return nil
 }
 ```
 
-- [ ] **Step 2: 写心跳自监听退出**（spec §12 N5 合并要求）
+- [ ] **Step 3: 跑测试 → PASS**
+
+- [ ] **Step 4: Commit**
+
+```bash
+git commit -am "feat(eval): InstanceExecutor 骨架 + CAS 环节 + 单测 (M4.5.1)"
+```
+
+---
+
+### Task 4.5.2: 心跳 + init_script 阶段
+
+**Files:**
+- Modify: `internal/domains/services/evaluation/executor.go`
+- Test: `internal/domains/services/evaluation/executor_init_test.go`
+
+- [ ] **Step 1: 写测试** —— init_script 非空且 exit=0 → status 转 RUNNING；exit≠0 → status 转 FAILED；error_log 含 stderr 前 4KB。
+
+- [ ] **Step 2: 实现 `startHeartbeat` 与 init 阶段**（PlanReview-Blk5 空指针修复：先判 `r != nil`）
+
+```go
+func (e *InstanceExecutor) Execute(ctx context.Context, instanceID string) error {
+    if ok, _ := e.instRepo.CASStatus(ctx, instanceID, ev.InstanceStatusQueued, ev.InstanceStatusInitializing); !ok {
+        return nil
+    }
+    inst, err := e.instRepo.GetByID(ctx, instanceID)
+    if err != nil { return err }
+
+    // 心跳 goroutine 与自监听
+    stopHB := e.startHeartbeat(ctx, instanceID)
+    defer stopHB()
+
+    workdir := filepath.Join(e.workspaceRoot, inst.ConversationID, inst.MessageID)
+    if err := os.MkdirAll(workdir, 0700); err != nil {
+        e.finalize(ctx, inst, ev.InstanceStatusFailed, "mkdir workspace: "+err.Error(), nil, nil)
+        return nil
+    }
+
+    // init_script
+    if inst.CaseSnapshot.InitScript != "" {
+        r, rerr := e.verifyRunner.Run(ctx, workdir, inst.CaseSnapshot.InitScript)
+        stderr := ""
+        if r != nil { stderr = r.Stderr }
+        if rerr != nil {
+            e.finalize(ctx, inst, ev.InstanceStatusFailed, "init_script run: "+rerr.Error()+"; stderr="+stderr, nil, nil)
+            return nil
+        }
+        if r.ExitCode != 0 {
+            e.finalize(ctx, inst, ev.InstanceStatusFailed, "init_script exit="+strconv.Itoa(r.ExitCode)+"; stderr="+stderr, nil, nil)
+            return nil
+        }
+    }
+
+    // INITIALIZING -> RUNNING
+    if ok, _ := e.instRepo.CASStatus(ctx, instanceID, ev.InstanceStatusInitializing, ev.InstanceStatusRunning); !ok {
+        return nil
+    }
+    // 4.5.3 继续
+    return nil
+}
+```
+
+心跳 goroutine：
 
 ```go
 func (e *InstanceExecutor) startHeartbeat(ctx context.Context, id string) context.CancelFunc {
@@ -1141,11 +1246,8 @@ func (e *InstanceExecutor) startHeartbeat(ctx context.Context, id string) contex
             select {
             case <-ctx2.Done(): return
             case <-t.C:
-                // 更新 heartbeat_at
                 _ = e.instRepo.UpdateHeartbeat(ctx, id, e.workerID, time.Now())
-                // 自监听：若被巡检器改成 TIMEOUT，主动 cancel 外层 ctx
-                s, _ := e.instRepo.GetStatus(ctx, id)
-                if s == ev.InstanceStatusTimeout || s == ev.InstanceStatusCanceled {
+                if s, _ := e.instRepo.GetStatus(ctx, id); s == ev.InstanceStatusTimeout || s == ev.InstanceStatusCanceled {
                     cancel()
                     return
                 }
@@ -1156,12 +1258,145 @@ func (e *InstanceExecutor) startHeartbeat(ctx context.Context, id string) contex
 }
 ```
 
+- [ ] **Step 3: 跑测试 → PASS**
+
+- [ ] **Step 4: Commit**
+
+```bash
+git commit -am "feat(eval): InstanceExecutor 心跳 + init_script (M4.5.2)"
+```
+
+---
+
+### Task 4.5.3: chat + verify 阶段
+
+**Files:**
+- Modify: `internal/domains/services/evaluation/executor.go`
+- Test: `internal/domains/services/evaluation/executor_chat_verify_test.go`
+
+- [ ] **Step 1: 写测试** —— mock chatRunner 返回 3 分支：正常 / DidTimeout=true / Error≠nil；mock verifyRunner 返回 exit=0 / exit=1；组合断言状态机走向。
+
+- [ ] **Step 2: 补齐主流程**
+
+```go
+// 承接 4.5.2 尾部
+res, err := e.chatRunner.Run(ctx, InternalChatReq{
+    Snapshot:       inst.CaseSnapshot.AgentSnapshot,  // instance 里冻结的 snapshot
+    ConversationID: inst.ConversationID,
+    MessageID:      inst.MessageID,
+    Query:          inst.CaseSnapshot.TaskPrompt,
+    TotalTimeout:   e.chatTimeout,
+})
+if err != nil {
+    e.finalize(ctx, inst, ev.InstanceStatusFailed, "chat runner: "+err.Error(), nil, nil)
+    return nil
+}
+if res.DidTimeout {
+    e.finalize(ctx, inst, ev.InstanceStatusTimeout, "agent_chat_timeout", nil, nil)
+    return nil
+}
+if res.Error != nil {
+    e.finalize(ctx, inst, ev.InstanceStatusFailed, "agent_error: "+res.Error.Error(), nil, nil)
+    return nil
+}
+
+// RUNNING -> VERIFYING
+if ok, _ := e.instRepo.CASStatus(ctx, instanceID, ev.InstanceStatusRunning, ev.InstanceStatusVerifying); !ok {
+    return nil
+}
+
+vres, verr := e.verifyRunner.Run(ctx, workdir, inst.CaseSnapshot.VerifyScript)
+passed := verr == nil && vres != nil && vres.ExitCode == 0
+
+// 见 4.5.4 finalize
+e.finalizeVerify(ctx, inst, passed, vres, verr)
+return nil
+```
+
+- [ ] **Step 3: 跑测试 → PASS**
+
+- [ ] **Step 4: Commit**
+
+```bash
+git commit -am "feat(eval): InstanceExecutor chat + verify 分支 (M4.5.3)"
+```
+
+---
+
+### Task 4.5.4: result 落库 + 状态推进 + cleanup
+
+**Files:**
+- Modify: `internal/domains/services/evaluation/executor.go`
+- Test: `internal/domains/services/evaluation/executor_finalize_test.go`
+
+- [ ] **Step 1: 写测试** —— PASSED 分支：断言 result.passed=true、token 三字段>0、trace_id 回填、task.RecountAndTransit 被调；FAILED 分支：error_log 截断在 64KB。
+
+- [ ] **Step 2: 实现 finalize 系列**
+
+```go
+func (e *InstanceExecutor) finalize(ctx context.Context, inst *ev.RunInstance, target ev.InstanceStatus, errMsg string, vres *VerifyResult, metrics *Metrics) {
+    // CAS 到目标态
+    _, _ = e.instRepo.CASStatus(ctx, inst.ID, inst.Status, target)
+
+    // 写 result（截断 error_log 到 64KB）
+    r := &ev.Result{
+        InstanceID: inst.ID,
+        Passed:     target == ev.InstanceStatusPassed,
+        FinishedAt: time.Now(),
+    }
+    if vres != nil {
+        r.VerifyExitCode = vres.ExitCode
+        r.VerifyStdout   = truncate(vres.Stdout, 64<<10)
+        r.VerifyStderr   = truncate(vres.Stderr, 64<<10)
+    }
+    if metrics != nil {
+        r.PromptTokens     = metrics.PromptTokens
+        r.CompletionTokens = metrics.CompletionTokens
+        r.TotalTokens      = metrics.TotalTokens
+        r.AgentLatencyMs   = metrics.AgentLatencyMs
+        _ = e.instRepo.UpdateTraceID(ctx, inst.ID, metrics.TraceID) // 收敛后一次性回填（spec §2.3）
+    }
+    r.ErrorLog = truncate(errMsg, 64<<10)
+    _ = e.resultRepo.Create(ctx, r)
+
+    // 推进 task 计数与状态
+    _ = e.taskRepo.RecountAndTransit(ctx, inst.TaskID)
+
+    // 清工作区（signature: CleanupMessage(messageID string) error —— 单参！）
+    _ = e.skillExecutor.CleanupMessage(inst.MessageID)
+}
+
+func (e *InstanceExecutor) finalizeVerify(ctx context.Context, inst *ev.RunInstance, passed bool, vres *VerifyResult, verr error) {
+    // tracer flush + 聚合
+    _ = e.tracer.Flush()
+    time.Sleep(200 * time.Millisecond)
+    metrics, _ := e.aggregator.Aggregate(ctx, inst.ConversationID)
+
+    target := ev.InstanceStatusPassed
+    errMsg := ""
+    if !passed {
+        target = ev.InstanceStatusFailed
+        if verr != nil {
+            errMsg = "verify: " + verr.Error() // 含 60s 超时也走这里 → FAILED（spec §3.3 R2-N4）
+        } else if vres != nil {
+            errMsg = firstNonEmpty(vres.Stderr, "verify_exit_"+strconv.Itoa(vres.ExitCode))
+        }
+    }
+    e.finalize(ctx, inst, target, errMsg, vres, metrics)
+}
+
+func truncate(s string, n int) string {
+    if len(s) <= n { return s }
+    return s[:n] + "\n[truncated]"
+}
+```
+
 - [ ] **Step 3: 集成测**：sqlite in-memory + mock InternalChatRunner + 真实 VerifyRunner，跑完整 PENDING → PASSED 生命周期，断言 4 个 count 一致、result 存在、trace_id 回填。
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git commit -am "feat(eval): InstanceExecutor 完整执行链路 + 集成测 (M4.5)"
+git commit -am "feat(eval): InstanceExecutor finalize + 集成测 (M4.5.4)"
 ```
 
 ---
@@ -1308,7 +1543,41 @@ git commit -m "feat(eval): Asynq client/server/payload 基础设施 (M5.2)"
 
 ---
 
-### Task 5.3: RunInstanceHandler（Asynq Worker 入口）
+### Task 5.3: CaseTokenGate（Redis Lua 令牌桶）
+
+**Files:**
+- Create: `internal/infra/mq/case_token_gate.go`
+- Test: `internal/infra/mq/case_token_gate_test.go`（用 miniredis）
+
+- [ ] **Step 1: Lua 脚本**
+
+```lua
+-- KEYS[1] = eval:concurrency:case:{case_id}
+-- ARGV[1] = limit  ARGV[2] = ttl_seconds
+local n = tonumber(redis.call('INCR', KEYS[1]))
+if n == 1 then redis.call('EXPIRE', KEYS[1], ARGV[2]) end
+if n > tonumber(ARGV[1]) then
+    redis.call('DECR', KEYS[1])
+    return 0
+end
+return 1
+```
+
+- [ ] **Step 2: 实现 Acquire/Release**
+
+`Acquire` 跑 Lua；`Release` 单 `DECR`；TTL = `instance_total_timeout_sec + 60`。
+
+- [ ] **Step 3: miniredis 单测** 覆盖：并发 8 抢桶大小=4 时恰好 4 成功、TTL 到期自动释放。
+
+- [ ] **Step 4: Commit**
+
+```bash
+git commit -am "feat(eval): CaseTokenGate Redis Lua 令牌桶 + miniredis 单测 (M5.4)"
+```
+
+---
+
+### Task 5.4: RunInstanceHandler（Asynq Worker 入口）
 
 **Files:**
 - Create: `internal/infra/mq/run_instance_handler.go`
@@ -1352,40 +1621,6 @@ func (h *RunInstanceHandler) ProcessTask(ctx context.Context, task *asynq.Task) 
 
 ```bash
 git commit -am "feat(eval): Asynq RunInstanceHandler + 单测 (M5.3)"
-```
-
----
-
-### Task 5.4: CaseTokenGate（Redis Lua 令牌桶）
-
-**Files:**
-- Create: `internal/infra/mq/case_token_gate.go`
-- Test: `internal/infra/mq/case_token_gate_test.go`（用 miniredis）
-
-- [ ] **Step 1: Lua 脚本**
-
-```lua
--- KEYS[1] = eval:concurrency:case:{case_id}
--- ARGV[1] = limit  ARGV[2] = ttl_seconds
-local n = tonumber(redis.call('INCR', KEYS[1]))
-if n == 1 then redis.call('EXPIRE', KEYS[1], ARGV[2]) end
-if n > tonumber(ARGV[1]) then
-    redis.call('DECR', KEYS[1])
-    return 0
-end
-return 1
-```
-
-- [ ] **Step 2: 实现 Acquire/Release**
-
-`Acquire` 跑 Lua；`Release` 单 `DECR`；TTL = `instance_total_timeout_sec + 60`。
-
-- [ ] **Step 3: miniredis 单测** 覆盖：并发 8 抢桶大小=4 时恰好 4 成功、TTL 到期自动释放。
-
-- [ ] **Step 4: Commit**
-
-```bash
-git commit -am "feat(eval): CaseTokenGate Redis Lua 令牌桶 + miniredis 单测 (M5.4)"
 ```
 
 ---
@@ -1446,7 +1681,10 @@ type impl struct {
 ```
 
 关键实现要点：
-- **`CreateTask`**：事务里插 task + M×N instance + N snapshot；事务提交后逐条 `mqClient.EnqueueRunInstance(...)`；Enqueue 失败留 PENDING 由 reconciler 兜底（spec §5.7）。引用不存在时 400 全批失败（R2-N5）。
+- **`CreateTask`**：事务里插 task + M×N instance + N snapshot；**事务提交后**做 Enqueue（PlanReview-Blk7 修复 spec §11 风险 3）：
+  - `batchSize = 50`；每批用 `errgroup` + `semaphore.NewWeighted(8)` 并行 Enqueue，避免 M×N=400 时 HTTP 请求阻塞。
+  - 单点 Enqueue 失败记 warn log，实例保持 PENDING；`TaskStatusReconciler`（M7）会扫 `status='PENDING' AND queued_at IS NULL` 重新入队兜底。
+  - 引用不存在时 400 全批失败（R2-N5），事务未提交，任何数据不落库。
 - **`DeleteCase`**：查 `eval_run_instance WHERE case_id=? AND task.status IN ('PENDING','RUNNING')`；非空 → 409。
 - **`DeleteTask`**：spec §2.6 顺序敏感 —— 先 DELETE task 触发 CASCADE，再 DELETE 关联 snapshot；同事务。
 - **`RetryTask`**：`SELECT id, attempt FROM eval_run_instance WHERE task_id=? AND status IN ('FAILED','TIMEOUT')`，逐条 CAS 推 PENDING + attempt+1 + 清 conv/msg id，然后走 high queue Enqueue。
@@ -1718,6 +1956,23 @@ git commit -am "docs(eval): README + 部署文档 (M9.2)"
 - `github.com/robfig/cron/v3` — 定时任务
 - `github.com/alicebob/miniredis/v2` (dev) — Redis 单测
 - 复用：`gorm.io/gorm`, `gorm.io/datatypes`, `go.uber.org/zap`, `github.com/spf13/viper`, 项目 tracing/agents/tools
+
+## 附录 C: PlanReview 反馈响应清单（Round 1）
+
+Reviewer 提出 8 项 Blocker + 12 项 Nice-to-have。以下为处理情况：
+
+| # | 类型 | 位置 | 处理 |
+|---|---|---|---|
+| Blk1 | Repository 目录 | Task 1.3/1.4 | 全部改到 `internal/infra/repositories/`（对齐既有 `app_config.go`） |
+| Blk2 | 依赖顺序 | Task 5.3/5.4 | 交换 —— 先 CaseTokenGate 后 RunInstanceHandler |
+| Blk3 | AutoMigrate 落点 | Task 1.2 | 明确落 `internal/infra/storage/postgres.go: InitStorage()` 尾部 |
+| Blk4 | Chat 签名 + snapshot 桥接 | Task 4.4 | 修正 Chat 无返回值；`ChatRequest` 加 `ConfigOverride` 字段前移 snapshot 桥接到 M4 |
+| Blk5 | InstanceExecutor 过大 | Task 4.5 | 拆成 4.5.1 骨架/CAS、4.5.2 心跳+init、4.5.3 chat+verify、4.5.4 result+cleanup |
+| Blk6 | 破坏性接口一次做完 | Task 3.2 | 拆成 3.2.a Adapter 内部持有 Usage、3.2.b 平推接口+mock、3.2.c 写 span tag |
+| Blk7 | §11 风险 3/6 未落地 | Task 6.1 + Task 4.2 | Task 6.1 补 batch=50 + errgroup 并行；Task 4.2 显式白名单 env |
+| Blk8 | `/health` 端点不存在 | E-11 | 改用启动日志 + Redis KEYS 校验作为健康信号 |
+
+Nice-to-have 12 项：其中 N-3、N-6、N-9 已合并到对应 Blocker 修复内；余项作为实施阶段的敏捷回填点，不阻断进入 Round 2。
 
 ---
 

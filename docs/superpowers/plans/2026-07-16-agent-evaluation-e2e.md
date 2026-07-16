@@ -308,8 +308,13 @@ redis-cli -n 1 GET 'eval:concurrency:case:${CASE_ID}'
 
 ## E-11 部署健康检查（生产化前置）
 
-- [ ] `curl http://localhost:8080/health` 或类似 endpoint 应含 `asynq: connected, cron: running` 子项
-- [ ] Redis db=1 隔离验证：`redis-cli -n 1 KEYS 'asynq:*' | wc -l` > 0；`redis-cli -n 0 KEYS 'asynq:*' | wc -l` == 0
+**说明（PlanReview-Blk8 修复）**：本项目暂无独立 `/health` 端点整合 asynq/cron 探针。改用启动日志 + Redis 直查作为替代健康信号，不额外增开发工作量。
+
+- [ ] 启动日志包含 `Asynq connected redis db=1`（在 `mq.NewClient` 内 zap info log）
+- [ ] 启动日志包含 `Cron scheduler started, 3 jobs registered`
+- [ ] Redis db=1 隔离验证：
+  - `redis-cli -n 1 KEYS 'asynq:*' | wc -l` > 0（连上后至少有 queue 元数据）
+  - `redis-cli -n 0 KEYS 'asynq:*' | wc -l` == 0（业务库无污染）
 - [ ] `pprof /debug/pprof/goroutine?debug=1` 采样：无 goroutine 卡在 `chan send` / `select` 超 10 分钟
 
 ---
