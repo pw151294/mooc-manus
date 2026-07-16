@@ -85,6 +85,12 @@
 
 物理删除。删除前置检查：若存在 `eval_run_instance` 引用本 case 且引用它的 task 未进入终态，返回 409。task 进入终态之后允许物理删除；已终态实例的 `eval_run_instance.case_snapshot`（jsonb）里冻结了用例三要素，删除 case 不影响历史结果可回溯。
 
+**用例三要素的职责边界**（B1 说明）：
+
+- `init_script`：负责在智能体工作目录 (`${WorkspaceBaseDir}/${conversationId}/${messageId}`) 内完成**文件系统初始化**（写入待编辑的源文件、准备 fixture、下载数据等）。文件读写/编辑类用例的输入文件全部由 init_script 落地，无需额外的 `input_context` 字段。
+- `task_prompt`：给到智能体的评测指令。
+- `verify_script`：验证智能体输出，`exit_code=0` 通过。可访问 init_script 建立的文件与智能体产出文件。
+
 | 列 | 类型 | 说明 |
 |---|---|---|
 | `id` | `uuid pk` | |
@@ -131,14 +137,17 @@
 | `message_id` | `varchar(64)` | 每次 attempt 重置 |
 | `trace_id` | `varchar(64)` | 首个 AGENT_ROOT span 的 trace_id |
 | `queued_at / started_at / finished_at / heartbeat_at` | `timestamp` | |
+| `deadline_at` | `timestamp` | 每次 attempt 起跑时 = `started_at + instance_total_timeout`；供巡检器直接比较，不依赖 attempt 期间的配置变更 |
 | `worker_id` | `varchar(64)` | 处理该实例的 worker 标识 |
-| `error_message` | `text` | 排队/初始化阶段的失败摘要 |
+| `error_message` | `text` | 排队/初始化阶段的失败摘要，超过 4KB 截断 + `\n[truncated]` |
 
 约束与索引：
 - `UNIQUE (task_id, case_id, agent_config_snapshot_id)` — 天然幂等
 - `INDEX (task_id, status)`
-- `INDEX (heartbeat_at)` — 供孤儿巡检
+- `INDEX (status, heartbeat_at)` — 巡检查询 `status IN (INITIALIZING,RUNNING,VERIFYING) AND heartbeat_at < ?`（B-N2 复合索引）
 - `INDEX (status, queued_at)` — 供 Enqueue 兜底
+- `FK task_id → eval_task(id) ON DELETE CASCADE`
+- `FK agent_config_snapshot_id → eval_agent_snapshot(id) ON DELETE RESTRICT`（snapshot 由 task 删除时一并清理）
 
 ### 2.4 `eval_result`（1:1 to instance）
 
@@ -157,6 +166,11 @@
 | `agent_latency_ms` | `bigint` | AGENT_ROOT.latency_ms |
 | `finished_at` | `timestamp` | |
 
+### 2.4.1 结果字段截断与外键约束（B-Blk11 明确）
+
+- `verify_stdout / verify_stderr / error_log`：单字段上限 64KB，超过时截断并追加 `\n[truncated]`
+- `FK instance_id → eval_run_instance(id) ON DELETE CASCADE`
+
 ### 2.5 `eval_agent_snapshot`（配置快照 —— 唯一额外新增表）
 
 冻结 `appConfig` 关键字段，保证智能体配置多天后变更不影响历史评测复盘。
@@ -174,6 +188,24 @@
 | `created_at` | `timestamp` | |
 
 **唯一新增表的动机**：`appConfig` 是活对象，用户会修改。评测报告若在几天后被复查，若无快照则模型/prompt/工具集全部漂移，评测结果失去可比性。
+
+### 2.6 表间外键 & 级联删除顺序（B-Blk3 明确）
+
+```
+eval_task (id) ──┐
+                 ├── eval_run_instance (task_id) ON DELETE CASCADE
+                 │       └── eval_result (instance_id) ON DELETE CASCADE
+                 └── (无 FK) case_ids / agent_config_snapshot_ids 冗余在 task 的 jsonb 里
+
+eval_case (id) ── (无 FK, case 物理删) ← eval_run_instance.case_id 逻辑关联，靠 case_snapshot 保历史
+eval_agent_snapshot (id) ── eval_run_instance.agent_config_snapshot_id  ON DELETE RESTRICT
+```
+
+**删除路径**：
+
+- 删单 case (`DELETE /api/eval/cases/{id}`)：前置查 `eval_run_instance WHERE case_id=? AND task.status NOT IN ('SUCCEEDED','PARTIAL_FAILED')`，非空则 409。通过检查后直接物理删 case。
+- 删单实例：DB 级 CASCADE 自动删 `eval_result`；handler 内**同事务** 重算并 UPDATE task 的 4 个 count；同事务内 CAS 推进 task 状态（可能触发 RUNNING→SUCCEEDED/PARTIAL_FAILED）。
+- 删单任务：DB 级 CASCADE 自动删 instance + result；handler 内**同事务** DELETE 关联 `eval_agent_snapshot`（agent_snapshot 与 task 1:N 关系，snapshot 不复用）。
 
 ---
 
@@ -256,6 +288,14 @@ func TransitInstance(from, to InstanceStatus) error
 
 **推进方式**：全程 CAS —— `UPDATE eval_run_instance SET status=? WHERE id=? AND status=?`；返回 `rows_affected=0` 视为竞态失败，worker 记录 warn log 并放弃当前流转（此时说明有并发方已推进，通常是巡检器）。
 
+### 3.3 `FAILED` 与 `TIMEOUT` 状态语义边界（B-Blk4 澄清）
+
+Reviewer 建议增加一个通用 FAILED —— 已有。这里明确 FAILED / TIMEOUT 判定口径：
+
+- `FAILED`：可归因失败 —— init_script 非 0 退出、智能体主动报 error 事件、verify_script 非 0 退出、worker panic 被 recover。**passed=false 且验证脚本能执行完毕的用例走 FAILED，不走 TIMEOUT**。
+- `TIMEOUT`：仅两种触发路径 —— 巡检器发现 `deadline_at < now()` 强推、Asynq 20min 硬超时兜底。
+- 具体分类落 `eval_result.error_log`；上游筛选按 status 即可，不需要另加 sub-status。
+
 ---
 
 ## 4. 指标采集补强 —— LLM token 落地 + 聚合算法
@@ -287,7 +327,22 @@ type Invoker interface {
 }
 ```
 
-**破坏性变更**，但 Invoker 实现仅 2 个（`OpenAIAdapter` / `AnthropicAdapter`）、调用点仅 2 处（`base.go: StreamingInvokeLLM` / `InvokeLLM`）。测试 mock 预估 3-5 处，一次改完。
+**破坏性变更影响面详评（B-Blk5）**
+
+调研 (`grep -RIn "\.StreamingInvoke\|\.Invoke(" internal/`) 得到调用点分布：
+
+| 位置 | 用途 | 迁移成本 |
+|---|---|---|
+| `internal/domains/services/agents/base.go` (2 处) | `StreamingInvokeLLM` / `InvokeLLM` | 主目标，接住 Usage 写 span |
+| `internal/domains/services/agents/react.go` / `plan.go` | 走 base.go 封装，**不直接调 Invoker** | 无 |
+| 单测 mock：`internal/domains/services/agents/*_test.go` | mock Invoker 实现 | 3-5 处，机械修改 |
+| 无其他外部调用点（Invoker 只在 domain/agents 内部使用） | | |
+
+**兼容策略**：不保留旧签名过渡。一次性改，Go 编译器强制帮忙抓漏（漏改直接 build fail）。这比双签名带来的长期腐化更划算。
+
+**风险清单**：
+1. SDK 不返回 usage（如 OpenAI streaming 早期版本 / Anthropic 某些模型）→ Adapter 内部填 0 + `logger.Warn`，不阻断。
+2. span tag 脱敏正则误杀（现有 `token|password|secret|authorization`）→ 实施阶段第 1 步先加单测 `TestUsageTagNotMasked`，若命中改用命名 `llm.io.prompt_units/completion_units/total_units`。以单测结果为准，本 spec 描述用 `llm.usage.*`。
 
 **③ Adapter 侧填充 Usage**
 
@@ -349,8 +404,19 @@ func (a *TraceAggregator) Aggregate(conversationID string) (Metrics, error) {
 - 工作目录 = 智能体主任务的同一个 `${WorkspaceBaseDir}/${conversationId}/${messageId}`（验证脚本要看到智能体产出的文件）
 - 写入 `verify_script` 到 workspace 内 `.verify.sh` (`0700`)
 - `exec.CommandContext(ctx, "bash", ".verify.sh")` + stdout/stderr Pipe，各截断 64KB
-- **环境变量白名单**：仅 `PATH / HOME / LANG`；显式清空 `OPENAI_API_KEY / ANTHROPIC_API_KEY / AZURE_*` 等敏感 env，防止 case 作者反向渗出 key
+- **环境变量白名单**：仅 `PATH / HOME / LANG=C.UTF-8`（LANG 明确指定 UTF-8 防止中文乱码 —— N8）；显式清空 `OPENAI_API_KEY / ANTHROPIC_API_KEY / AZURE_*` 等敏感 env，防止 case 作者反向渗出 key
 - 退出后**不清理 workspace** —— 由既有 `CleanupMessage()` 走标准回收路径
+
+**关于"智能体可能 `rm -rf` 恶意破坏 workspace"（B-Blk6 回应）**：
+
+Reviewer 提议在 `/tmp/eval-verify-{run_id}` 独立隔离目录跑 verify。**驳回**理由：
+
+1. 评测的核心语义就是"看智能体在自己 workspace 里的产出"。搬到独立目录做验证，就要在两个目录间做文件同步，本身就有一致性风险。
+2. 智能体已经在 `${WorkspaceBaseDir}/${conversationId}/${messageId}` 里被 NATIVE 三件套限制（`sensitive_path_deny_list` + `bash_command_deny_list` 见 `config.go:54`），路径穿透早已由 NATIVE 层守好。
+3. 智能体故意 `rm -rf ./*` 只会破坏它**自己的 workspace**，导致 verify 判 FAILED —— 这本来就是评测想暴露的行为，不应该被 verify 屏蔽掉。
+4. 顶层宿主机由 NATIVE `bash_command_deny_list` + Docker (若部署时启用) 兜底。
+
+**结论**：workspace 隔离在 NATIVE 层完成，Verify 层不重复隔离，只做进程/env/超时隔离。此项已明确说清，不改设计。
 
 **判分逻辑**：`exit_code == 0 → passed=true`；其他一律 false，stdout/stderr 落库。
 
@@ -402,6 +468,8 @@ info, err := client.Enqueue(
 
 **幂等 key** = Asynq 默认 SHA256(task_type + payload bytes)。`Attempt` 是 payload 一部分，重试后 attempt+1 → 幂等 key 自然不同。
 
+**幂等 TTL 覆盖失败重投场景（B-Blk7）**：`Unique(24h)` 意味着 24h 内**同一 (instance_id, attempt)** 无法重复入队。这刚好是我们要的语义 —— attempt 只有由用户显式触发或巡检器 CAS 推进 PENDING 时才 +1，attempt 换了幂等 key 就换了，Enqueue 冲突不会发生。若 Enqueue 因网络抖动被客户端自动重试且 Redis ACK 丢失，Asynq 客户端内建重试会靠幂等键去重（第二次 Enqueue 返回 `ErrDuplicateTask` 但 task 已在队列），业务侧忽略此错误即可。
+
 ### 5.4 消费策略 & 限流削峰
 
 **5.4.1 case 级令牌桶**（防止某个 case 独占 worker pool）
@@ -449,7 +517,7 @@ Redis key: eval:concurrency:case:{case_id}
 
 - **未取任务**：留在 Redis，Asynq server 重启自动恢复消费。
 - **已取未完成**：Asynq 用 active list（zset by heartbeat），worker 心跳 5s 一次，超 30s 无更新→ 自动迁回 pending 重派。
-- **业务侧孤儿**：worker 每 15s 调 `InstanceRepo.UpdateHeartbeat`；`InstanceHeartbeatSweeper` cron 每 30s 扫 `heartbeat_at < now - 90s` 强制推 TIMEOUT。
+- **业务侧孤儿**：worker 每 15s 调 `InstanceRepo.UpdateHeartbeat`；`InstanceHeartbeatSweeper` cron 每 30s 扫**同时满足**`status IN (INITIALIZING,RUNNING,VERIFYING) AND heartbeat_at < now - 90s AND deadline_at < now()` 三条件的实例强制推 TIMEOUT（B-Blk8：deadline_at 是绝对时间戳，长 LLM 调用只要还没到总超时上限就不会被误杀；90s 心跳阈值仅用于剔除 worker 崩溃场景，非用于超时判定）。
 - **Redis 持久化**：项目 Redis 已开 RDB。建议部署侧开 AOF (`appendonly yes / appendfsync everysec`) 双重保险。此项属部署清单，非代码改动。
 
 ### 5.7 定时巡检 & 一致性
@@ -486,6 +554,13 @@ Redis key: eval:concurrency:case:{case_id}
 ```
 
 Asynq 也可拆独立进程 `cmd/eval-worker/main.go`；第一版单进程合体，后续扩容再拆。
+
+### 5.9 Redis DB 号选择（B-Blk12 明确）
+
+- 项目现有 Redis 使用 `db 0`（`config/config.go: RedisConfig` 默认 DB=0）。
+- 评测 Asynq **独立占用 `db 1`**，与业务缓存物理隔离。
+- 若未来运维发现 db 0 与 db 1 冲突（例如引入其他中间件），实施阶段配置项 `asynq.redis_db` 一处可切换，不涉及代码改动。
+- 部署校验：启动时 `asynq_client.go` 应打 info log `Asynq connected redis db=1`，并检查该 db 下无残留 `mooc:*` 业务前缀 key（若有则告警）。
 
 ---
 
@@ -667,11 +742,11 @@ redis_db = 1                             # 独立 DB 号，避免污染现有缓
 
 ## 9. 里程碑（供实施计划分解）
 
-1. **M1 数据层与迁移**：5 张表 + PO/Repository + AutoMigrate
+1. **M1 数据层与迁移**：5 张表 + PO/Repository + AutoMigrate（含 FK/CASCADE/复合索引）
 2. **M2 状态机 + Domain skeleton**：`state_machine.go` + `EvaluationDomainService` 接口 + `evaluation` DO
-3. **M3 Invoker Usage 补强**：改接口 + 2 个 adapter + `finalizeLLMSpanSuccess` + 单测
-4. **M4 Asynq 基础设施**：`internal/infra/mq/*` + route.go 注册 Asynq server
-5. **M5 InstanceExecutor + VerifyRunner + TraceAggregator**：核心执行链路
+3. **M3 Invoker Usage 补强**：改接口 + 2 个 adapter + `finalizeLLMSpanSuccess` + `TestUsageTagNotMasked` 单测
+4. **M4 核心执行链路**：`InstanceExecutor + VerifyRunner + TraceAggregator + Snapshot` （**顺序调整（B-Blk10）**：把执行链路提前于 Asynq 集成，保证 M5 Asynq worker 有可用的 `ExecuteInstance` 入口，避免空壳）
+5. **M5 Asynq 基础设施**：`internal/infra/mq/*` + route.go 注册 Asynq server + worker 调用 M4 的 ExecuteInstance
 6. **M6 Application + Handler + Routes**：15 个 API 落地
 7. **M7 Cron 巡检 3 个 job**：`internal/infra/scheduler/*`
 8. **M8 集成测 + 压测**
@@ -703,6 +778,43 @@ redis_db = 1                             # 独立 DB 号，避免污染现有缓
 | 巡检器多副本重复扫 | 第一版单副本；SQL 幂等；未来 redislock 选主 |
 | 智能体死循环耗尽 token | 现有 `circuitBreaker` + `MaxIterations` 已在 BaseAgent 层生效；评测无额外风险 |
 | 用户上传 verify 脚本恶意扫描宿主机 | env 白名单 + 独立 timeout；不给 SUDO；workspace 隔离 |
+
+---
+
+## 12. Reviewer 反馈响应清单（2026-07-16 Round 1）
+
+**接受并已改（Blocker）**：
+
+- B-Blk1 `eval_case` 输入上下文：**驳回** —— 输入文件全部由 `init_script` 建立，无需新增字段。已在 §2.1 明确职责边界。
+- B-Blk2 实例级超时：**采纳** —— §2.3 增 `deadline_at`；巡检器改比较 `deadline_at < now()` 而非 heartbeat 阈值。
+- B-Blk3 物理删除外键一致性：**采纳** —— §2.6 新增"表间外键 & 级联删除顺序"节，声明 CASCADE 关系与事务边界。
+- B-Blk4 `FAILED` 状态语义：**采纳** —— §3.1/§3.2 状态机中 `FAILED` 早已列入；§3.3 明确 FAILED vs TIMEOUT 判定口径。
+- B-Blk5 Invoker 破坏性变更影响面：**采纳** —— §4.2 增"破坏性变更影响面详评"表 + 兼容策略讨论 + 风险清单。
+- B-Blk6 验证脚本同目录安全：**驳回** —— §4.4 已加详细驳回理由（workspace 隔离在 NATIVE 层）。
+- B-Blk7 Asynq 幂等键：**部分采纳** —— Unique + Attempt 组合已在设计中；§5.3 补充"幂等 TTL 覆盖失败重投场景"段说清语义。
+- B-Blk8 心跳周期对长 LLM 请求误判：**采纳** —— §5.6 加入 `deadline_at < now()` 与心跳阈值 AND 合取判定，防止长 LLM 调用被误杀。
+- B-Blk9 Application 层用例编排器：**驳回** —— `EvaluationApplicationService` 已在 §1、§7 明确存在，Handler → App → Domain → Repo 严格四层，reviewer 误读。
+- B-Blk10 M4/M5 里程碑顺序：**采纳** —— §9 交换 M4/M5。
+- B-Blk11 error_log 长度截断：**采纳** —— §2.4.1 明确 64KB 截断。
+- B-Blk12 Redis DB 冲突：**采纳** —— §5.9 明确 db 号选择规则与启动检查。
+
+**接受并已改（Nice-to-have）**：
+
+- N1 `case.category` 枚举：**驳回** —— 本 spec 用 jsonb `tags` 更灵活，非枚举。
+- N2 `eval_run_instance` 复合索引：**采纳** —— §2.3 索引改 `(status, heartbeat_at)`。
+- N3 OpenAI streaming usage 可能为空：**采纳** —— §4.2 风险清单第 1 条。
+- N4 span_ids BIGINT[] vs jsonb：**驳回** —— `eval_result` 表中无 `span_ids` 字段，跨表按 `conversation_id` 查询 `ai_span` 即可。
+- N5 巡检强杀 Asynq 任务残留：**采纳到实施计划** —— Worker 每 3s 轮询自身 `run_instance.status`，发现被巡检器改成 TIMEOUT 主动退出，避免 goroutine 泄漏。写进 §5.5 worker 循环细节。
+- N6 Swagger：**采纳到实施计划** —— 项目已有 swaggo，M6 里程碑扩展"补 Swagger 注解"。
+- N7 定期清理 job：**驳回** —— 数据保留策略非本次范围；未来运维需求可加。
+- N8 LANG=C.UTF-8：**采纳** —— §4.4 已改。
+- N9 Asynq MaxRetry：**驳回** —— MaxRetry(0) + 巡检兜底是有意设计；瞬时 Redis 故障由 Asynq client 内建重连处理。
+- N10 `paused` 状态：**驳回** —— 本次不设计运维暂停；用户手删即可。
+
+追加实施计划要求：
+
+- 补 N5：Worker 主循环内加"每 3s SELECT status FROM eval_run_instance WHERE id=? "，若发现被外部改成 TIMEOUT 则主动 return，避免 goroutine 泄漏。这是 §5.6 与 N5 的合并要求。
+- 补 N6：M6 里程碑扩展 Swagger 注解。
 
 ---
 
