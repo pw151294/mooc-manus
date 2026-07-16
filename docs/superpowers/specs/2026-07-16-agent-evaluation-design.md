@@ -81,6 +81,8 @@
 
 ## 2. 数据层设计（5 张新表 + 复用 ai_span）
 
+**时区约定（R2-N8）**：所有 `timestamp` 字段均为 `TIMESTAMPTZ` (`timestamp with time zone`)，与既有 `ai_span` 表 (`AiSpanPO`) 保持一致；应用层统一以 UTC 写入，前端按用户时区渲染。
+
 ### 2.1 `eval_case`（评测用例）
 
 物理删除。删除前置检查：若存在 `eval_run_instance` 引用本 case 且引用它的 task 未进入终态，返回 409。task 进入终态之后允许物理删除；已终态实例的 `eval_run_instance.case_snapshot`（jsonb）里冻结了用例三要素，删除 case 不影响历史结果可回溯。
@@ -135,7 +137,7 @@
 | `attempt` | `int` | 从 1 递增，重试自增 |
 | `conversation_id` | `varchar(64)` | 每次 attempt 重置为新 uuid |
 | `message_id` | `varchar(64)` | 每次 attempt 重置 |
-| `trace_id` | `varchar(64)` | 首个 AGENT_ROOT span 的 trace_id |
+| `trace_id` | `varchar(64)` | 首个 AGENT_ROOT span 的 trace_id；由 `InstanceExecutor` 在 `TraceAggregator.Aggregate` 内一并回填（收敛后一次性 UPDATE，避免 span 异步落库尚未完成时空写）—— R2-N6 |
 | `queued_at / started_at / finished_at / heartbeat_at` | `timestamp` | |
 | `deadline_at` | `timestamp` | 每次 attempt 起跑时 = `started_at + instance_total_timeout`；供巡检器直接比较，不依赖 attempt 期间的配置变更 |
 | `worker_id` | `varchar(64)` | 处理该实例的 worker 标识 |
@@ -205,7 +207,7 @@ eval_agent_snapshot (id) ── eval_run_instance.agent_config_snapshot_id  ON D
 
 - 删单 case (`DELETE /api/eval/cases/{id}`)：前置查 `eval_run_instance WHERE case_id=? AND task.status NOT IN ('SUCCEEDED','PARTIAL_FAILED')`，非空则 409。通过检查后直接物理删 case。
 - 删单实例：DB 级 CASCADE 自动删 `eval_result`；handler 内**同事务** 重算并 UPDATE task 的 4 个 count；同事务内 CAS 推进 task 状态（可能触发 RUNNING→SUCCEEDED/PARTIAL_FAILED）。
-- 删单任务：DB 级 CASCADE 自动删 instance + result；handler 内**同事务** DELETE 关联 `eval_agent_snapshot`（agent_snapshot 与 task 1:N 关系，snapshot 不复用）。
+- 删单任务：**顺序敏感** —— `agent_config_snapshot_id` FK 是 `RESTRICT`，必须先 `DELETE FROM eval_task WHERE id=?` 触发 CASCADE 清空 instance，再 `DELETE FROM eval_agent_snapshot WHERE id IN (...)`；两步同事务。反过来会因 RESTRICT 失败。（R2-N1）
 
 ---
 
@@ -246,6 +248,8 @@ WHERE task_id = ?;
 - `terminal = total AND passed < total` → `PARTIAL_FAILED`
 
 `succeeded_count / failed_count / running_count` 冗余列**同事务原子更新**，避免列表页统计走全表扫。
+
+**并发漏推兜底（R2-N2）**：默认 `READ COMMITTED` 下，两个 worker 同时把最后两个 instance 推终态时，各自 SELECT 都可能看到 `terminal<total`，任务态可能停在 RUNNING。**依赖 `TaskStatusReconciler`（60s cron）做最终收敛兜底**。不使用 `SELECT ... FOR UPDATE` 是因为 M×N 大时 task 行会成为写热点，收益不抵。最坏延迟 60s，评测语义可接受。
 
 ### 3.2 `eval_run_instance` 状态枚举（8 个）
 
@@ -294,6 +298,7 @@ Reviewer 建议增加一个通用 FAILED —— 已有。这里明确 FAILED / T
 
 - `FAILED`：可归因失败 —— init_script 非 0 退出、智能体主动报 error 事件、verify_script 非 0 退出、worker panic 被 recover。**passed=false 且验证脚本能执行完毕的用例走 FAILED，不走 TIMEOUT**。
 - `TIMEOUT`：仅两种触发路径 —— 巡检器发现 `deadline_at < now()` 强推、Asynq 20min 硬超时兜底。
+- **verify_script 60s 超时不算 TIMEOUT**（R2-N4），走 FAILED 通道；语义上等价于 exit≠0，写入 `error_log = "verify_script_timeout"`。
 - 具体分类落 `eval_result.error_log`；上游筛选按 status 即可，不需要另加 sub-status。
 
 ---
@@ -478,6 +483,7 @@ info, err := client.Enqueue(
 Redis key: eval:concurrency:case:{case_id}
 桶大小: 4 (config 可覆写)
 实现: INCR + EXPIRE (Lua 脚本)
+EXPIRE 时长: instance_total_timeout_sec + 60s（默认 960s）—— worker 崩溃时兜底释放（R2-N3）
 ```
 
 `ProcessTask` 入口：
@@ -582,6 +588,8 @@ Asynq 也可拆独立进程 `cmd/eval-worker/main.go`；第一版单进程合体
 **上传两阶段协议**：前端先 `upload-content` 拿文本，用户可编辑后一并走 `POST /cases`；后端不存 blob，只存文本。手动/上传互斥在前端表单层保证，后端只校验"三要素文本非空"。
 
 ### 6.2 评测任务
+
+**任务创建的引用校验（R2-N5）**：`POST /tasks` 时若 `case_ids` 或 `agent_config_ids` 中任一 ID 不存在于活对象，整批 **400 全批失败**（不做静默跳过）。snapshot 冻结要求源存在；跳过语义会让前端进度与用户意图不一致。
 
 | Method | Path | 说明 |
 |---|---|---|
@@ -694,8 +702,7 @@ cron_dlq_archive_interval_sec = 300
 upload_content_max_bytes = 262144       # 256KB
 
 [asynq]
-redis_addr = "127.0.0.1:6379"           # 复用现有 Redis
-redis_password = ""
+# redis_addr / redis_password 默认继承 [redis] 段（RedisConfig）；仅在需要独立 Redis 实例时 override（R2-N7）
 redis_db = 1                             # 独立 DB 号，避免污染现有缓存
 ```
 
@@ -815,6 +822,19 @@ redis_db = 1                             # 独立 DB 号，避免污染现有缓
 
 - 补 N5：Worker 主循环内加"每 3s SELECT status FROM eval_run_instance WHERE id=? "，若发现被外部改成 TIMEOUT 则主动 return，避免 goroutine 泄漏。这是 §5.6 与 N5 的合并要求。
 - 补 N6：M6 里程碑扩展 Swagger 注解。
+
+## 13. Reviewer 反馈响应清单（2026-07-16 Round 2 —— APPROVED）
+
+R2 提出 8 项 nice-to-have，全部采纳并写入对应章节，标签 `R2-N*`：
+
+- R2-N1 §2.6 删单任务顺序敏感 → 已明确 "先 task 后 snapshot"
+- R2-N2 §3.1 并发漏推兜底 → 已声明依赖 60s reconciler
+- R2-N3 §5.4.1 令牌桶 EXPIRE 时长 → 已定 `instance_total_timeout_sec + 60s`
+- R2-N4 §3.3 verify 超时归属 → 已明确走 FAILED
+- R2-N5 §6.2 创建任务引用不存在 → 已明确 400 全批失败
+- R2-N6 §2.3 trace_id 写入时机 → 已明确 TraceAggregator 收敛后一次性 UPDATE
+- R2-N7 §7.2 Redis 配置继承 → 已改为默认继承 RedisConfig
+- R2-N8 §2 timestamp 时区 → 已明确 `TIMESTAMPTZ` UTC
 
 ---
 
