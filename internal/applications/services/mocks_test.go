@@ -22,6 +22,10 @@ func (m *mockInvoker) StreamingInvoke(_ []llm.Message, _ []llm.Tool, eventCh cha
 	return llm.Message{Role: llm.RoleAssistant, Content: ""}
 }
 
+func (m *mockInvoker) LastUsage() llm.Usage {
+	return llm.Usage{PromptTokens: 0, CompletionTokens: 0, TotalTokens: 0}
+}
+
 // mockTool 实现 tools.Tool 接口，可控制 SupportsRiskAssessment 与 Invoke 行为。
 type mockTool struct {
 	providerName   string

@@ -5,13 +5,16 @@ import (
 	"mooc-manus/internal/domains/models/events"
 	domainllm "mooc-manus/internal/domains/models/llm"
 	"mooc-manus/pkg/logger"
+	"sync"
 
 	"github.com/openai/openai-go"
 	"go.uber.org/zap"
 )
 
 type OpenAIAdapter struct {
-	llm *OpenAiLLM
+	llm         *OpenAiLLM
+	lastUsage   domainllm.Usage // 新增：最近一次调用的 usage
+	lastUsageMu sync.Mutex
 }
 
 func NewOpenAIAdapter(cfg models.ModelConfig) *OpenAIAdapter {
@@ -19,17 +22,38 @@ func NewOpenAIAdapter(cfg models.ModelConfig) *OpenAIAdapter {
 }
 
 func (a *OpenAIAdapter) Invoke(messages []domainllm.Message, tools []domainllm.Tool) (domainllm.Message, error) {
-	resp, err := a.llm.Invoke(toOpenAIMessages(messages), toOpenAITools(tools))
+	resp, sdkUsage, err := a.llm.Invoke(toOpenAIMessages(messages), toOpenAITools(tools))
 	if err != nil {
 		return domainllm.Message{}, err
 	}
+	a.lastUsageMu.Lock()
+	a.lastUsage = domainllm.Usage{
+		PromptTokens:     int64(sdkUsage.PromptTokens),
+		CompletionTokens: int64(sdkUsage.CompletionTokens),
+		TotalTokens:      int64(sdkUsage.TotalTokens),
+	}
+	a.lastUsageMu.Unlock()
 	return fromOpenAIMessage(resp), nil
 }
 
 // StreamingInvoke 透传 eventCh 给底层 OpenAiLLM.StreamingInvoke,close(eventCh) 责任由后者承担,符合 spec 4.4 约定。
 func (a *OpenAIAdapter) StreamingInvoke(messages []domainllm.Message, tools []domainllm.Tool, eventCh chan<- events.AgentEvent) domainllm.Message {
-	resp := a.llm.StreamingInvoke(toOpenAIMessages(messages), toOpenAITools(tools), eventCh)
+	resp, sdkUsage := a.llm.StreamingInvoke(toOpenAIMessages(messages), toOpenAITools(tools), eventCh)
+	a.lastUsageMu.Lock()
+	a.lastUsage = domainllm.Usage{
+		PromptTokens:     int64(sdkUsage.PromptTokens),
+		CompletionTokens: int64(sdkUsage.CompletionTokens),
+		TotalTokens:      int64(sdkUsage.TotalTokens),
+	}
+	a.lastUsageMu.Unlock()
 	return fromOpenAIMessage(resp)
+}
+
+// LastUsage 获取最近一次调用的 usage
+func (a *OpenAIAdapter) LastUsage() domainllm.Usage {
+	a.lastUsageMu.Lock()
+	defer a.lastUsageMu.Unlock()
+	return a.lastUsage
 }
 
 func toOpenAIMessages(messages []domainllm.Message) []openai.ChatCompletionMessageParamUnion {
