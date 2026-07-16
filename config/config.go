@@ -11,12 +11,42 @@ import (
 var Cfg *GlobalConfig
 
 type GlobalConfig struct {
-	Redis        RedisConfig    `toml:"redis"`
-	Database     DatabaseConfig `toml:"database"`
-	LoggerConfig LoggerConfig   `toml:"logger"`
-	Storage      StorageConfig  `toml:"storage"`
-	Skill        SkillConfig    `toml:"skill"`
-	Native       NativeConfig   `toml:"native"`
+	Redis        RedisConfig      `toml:"redis"`
+	Database     DatabaseConfig   `toml:"database"`
+	LoggerConfig LoggerConfig     `toml:"logger"`
+	Storage      StorageConfig    `toml:"storage"`
+	Skill        SkillConfig      `toml:"skill"`
+	Native       NativeConfig     `toml:"native"`
+	Evaluation   EvaluationConfig `toml:"evaluation"`
+	Asynq        AsynqConfig      `toml:"asynq"`
+}
+
+// EvaluationConfig 评测系统运行时参数（对应 spec §5 asynq 基础设施 + §6 巡检 cron）
+// 所有 sec 单位字段在使用处显式转 time.Duration，避免误用。
+type EvaluationConfig struct {
+	Enabled                    bool   `toml:"enabled"`
+	WorkerConcurrencyDefault   int    `toml:"worker_concurrency_default"`
+	WorkerConcurrencyHigh      int    `toml:"worker_concurrency_high"`
+	CaseConcurrencyLimit       int    `toml:"case_concurrency_limit"`
+	InstanceTotalTimeoutSec    int    `toml:"instance_total_timeout_sec"`
+	VerifyScriptTimeoutSec     int    `toml:"verify_script_timeout_sec"`
+	VerifyOutputCapBytes       int    `toml:"verify_output_cap_bytes"`
+	HeartbeatIntervalSec       int    `toml:"heartbeat_interval_sec"`
+	HeartbeatStaleThresholdSec int    `toml:"heartbeat_stale_threshold_sec"`
+	CronSweeperIntervalSec     int    `toml:"cron_sweeper_interval_sec"`
+	CronReconcilerIntervalSec  int    `toml:"cron_reconciler_interval_sec"`
+	CronDLQArchiveIntervalSec  int    `toml:"cron_dlq_archive_interval_sec"`
+	UploadContentMaxBytes      int64  `toml:"upload_content_max_bytes"`
+	WorkspaceRoot              string `toml:"workspace_root"` // executor workdir 根，默认走 native workspace（空值表示复用 native）
+}
+
+// AsynqConfig asynq 队列使用的 Redis 连接配置
+// 建议与业务 Redis 拆分不同 DB（例如业务 DB=0，asynq DB=1）以隔离键空间。
+// 若字段留空，InitConfig 会 fallback 到 [redis] 段。
+type AsynqConfig struct {
+	RedisAddr     string `toml:"redis_addr"`
+	RedisPassword string `toml:"redis_password"`
+	RedisDB       int    `toml:"redis_db"`
 }
 
 type RedisConfig struct {
@@ -88,5 +118,12 @@ func InitConfig() {
 	Cfg = new(GlobalConfig)
 	if _, err := toml.DecodeFile("config/config.toml", Cfg); err != nil {
 		log.Fatalf("failed to load config from toml: %v", err)
+	}
+	// asynq redis 连接 fallback：未显式配置时复用业务 [redis] 段
+	// 注意：整段 fallback（addr/password/db），避免只挑部分字段造成 DB 与目标实例错配
+	if Cfg.Asynq.RedisAddr == "" {
+		Cfg.Asynq.RedisAddr = Cfg.Redis.Addr
+		Cfg.Asynq.RedisPassword = Cfg.Redis.Password
+		Cfg.Asynq.RedisDB = Cfg.Redis.DB
 	}
 }

@@ -53,6 +53,10 @@ func (r *fakeRepo) ListTraces(context.Context, TraceFilter, int, int) ([]*TraceS
 	return nil, 0, nil
 }
 
+func (r *fakeRepo) ListByConversationID(context.Context, string) ([]*Span, error) {
+	return nil, nil
+}
+
 func newTestTracer(repo SpanRepository, batchSize int, flush time.Duration, bufCap int) *Tracer {
 	return NewTracer(repo,
 		WithBatchSize(batchSize),

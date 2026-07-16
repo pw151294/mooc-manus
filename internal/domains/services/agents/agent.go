@@ -178,9 +178,19 @@ func PickInvoker(cfg models.ModelConfig) invoker.Invoker {
 }
 
 func (s *BaseAgentDomainServiceImpl) createBaseAgent(request agents.ChatRequest) (*BaseAgent, error) {
-	appConfig, err := s.appConfigDomainSvc.GetById(request.AppConfigId)
-	if err != nil {
-		return nil, err
+	// 评测/回放场景：ConfigOverride 非空时直接使用冻结好的 AppConfigDO，避免受
+	// 原始 AppConfig 后续修改影响；否则按常规链路走 domain 服务读取。
+	var appConfig models.AppConfigDO
+	var err error
+	if request.ConfigOverride != nil {
+		appConfig = *request.ConfigOverride
+		logger.Info("使用 ConfigOverride 直接构造 BaseAgent",
+			zap.String("source_app_config_id", appConfig.AppConfigID))
+	} else {
+		appConfig, err = s.appConfigDomainSvc.GetById(request.AppConfigId)
+		if err != nil {
+			return nil, err
+		}
 	}
 	logger.Info("get app config", zap.Any("model config", appConfig.ModelConfig), zap.Any("agent config", appConfig.AgentConfig))
 
@@ -200,12 +210,7 @@ func (s *BaseAgentDomainServiceImpl) createBaseAgent(request agents.ChatRequest)
 			zap.Strings("function ids", request.FunctionIds), zap.Strings("provider ids", request.ProviderIds))
 		return nil, err
 	}
-	// 初始化a2a工具
-	srvCfgs, err := s.appConfigDomainSvc.GetA2AServers(request.AppConfigId)
-	if err != nil {
-		logger.Error("get a2a servers failed", zap.Error(err), zap.String("app config id", request.AppConfigId))
-	}
-	baseTools, err := tools.InitTools(providers, proId2Funcs, srvCfgs)
+	baseTools, err := tools.InitTools(providers, proId2Funcs, nil)
 	if err != nil {
 		logger.Error("init tools failed", zap.Error(err))
 		return nil, err

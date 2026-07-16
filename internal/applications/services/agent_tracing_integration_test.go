@@ -50,6 +50,10 @@ func (r *captureRepo) ListTraces(_ context.Context, _ tracing.TraceFilter, _ int
 	return nil, 0, nil
 }
 
+func (r *captureRepo) ListByConversationID(_ context.Context, _ string) ([]*tracing.Span, error) {
+	return nil, nil
+}
+
 // snapshot 返回当前累积 span 的浅拷贝，避免并发读写切片。
 func (r *captureRepo) snapshot() []*tracing.Span {
 	r.mu.Lock()
@@ -233,6 +237,9 @@ func (e *errorInvoker) StreamingInvoke(_ []llm.Message, _ []llm.Tool, eventCh ch
 	return llm.Message{Role: llm.RoleAssistant, Content: "partial"}
 }
 
+// LastUsage 桩实现：无 token 记账
+func (e *errorInvoker) LastUsage() llm.Usage { return llm.Usage{} }
+
 // TestStreamingInvokeLLM_StreamErrorMarksSpanError
 // 用例：LLM 流式调用中 error 事件应标记 llmSpan.IsError=true
 func TestStreamingInvokeLLM_StreamErrorMarksSpanError(t *testing.T) {
@@ -386,6 +393,9 @@ func (l *loopingInvoker) StreamingInvoke(_ []llm.Message, _ []llm.Tool, eventCh 
 	close(eventCh)
 	return llm.Message{Role: llm.RoleAssistant}
 }
+
+// LastUsage 桩实现：无 token 记账
+func (l *loopingInvoker) LastUsage() llm.Usage { return llm.Usage{} }
 
 // TestChat_60sTimeout_RootSpanIsError
 // 用例：Application 60s 兜底超时应给 root span MarkError

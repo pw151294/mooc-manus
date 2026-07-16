@@ -46,6 +46,51 @@ func (r *AiSpanRepositoryImpl) FindByTraceID(ctx context.Context, traceID string
 	return nodes, nil
 }
 
+// ListByConversationID 按 conversation_id 拉取全部 span，用于 TraceAggregator。
+// 按 start_time ASC 排序，保证同一 trace 内部 root/子 span 相对顺序可用。
+func (r *AiSpanRepositoryImpl) ListByConversationID(ctx context.Context, conversationID string) ([]*tracing.Span, error) {
+	var pos []models.AiSpanPO
+	if err := r.dbCli.WithContext(ctx).
+		Where("conversation_id = ?", conversationID).
+		Order("start_time ASC").
+		Find(&pos).Error; err != nil {
+		return nil, err
+	}
+	out := make([]*tracing.Span, 0, len(pos))
+	for i := range pos {
+		out = append(out, poToSpan(&pos[i]))
+	}
+	return out, nil
+}
+
+// poToSpan 将 PO 反序列化为 tracing.Span（查询路径专用）。
+// tags / logs 是 jsonb 字符串，反序列化失败时降级为空值，不阻塞聚合。
+func poToSpan(po *models.AiSpanPO) *tracing.Span {
+	var tags map[string]interface{}
+	if po.Tags != "" {
+		_ = json.Unmarshal([]byte(po.Tags), &tags)
+	}
+	var logs []tracing.LogEntry
+	if po.Logs != "" {
+		_ = json.Unmarshal([]byte(po.Logs), &logs)
+	}
+	return tracing.NewSpanForQuery(&tracing.AiSpanPOFields{
+		TraceID:        po.TraceID,
+		SpanID:         po.SpanID,
+		ParentSpanID:   po.ParentSpanID,
+		SpanType:       po.SpanType,
+		OperationName:  po.OperationName,
+		ConversationID: po.ConversationID,
+		AgentName:      po.AgentName,
+		StartTime:      po.StartTime,
+		EndTime:        po.EndTime,
+		LatencyMs:      po.LatencyMs,
+		IsError:        po.IsError,
+		Tags:           tags,
+		Logs:           logs,
+	})
+}
+
 func (r *AiSpanRepositoryImpl) ListTraces(ctx context.Context, filter tracing.TraceFilter, page, pageSize int) ([]*tracing.TraceSummary, int64, error) {
 	if page < 1 {
 		page = 1

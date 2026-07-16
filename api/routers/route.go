@@ -1,20 +1,32 @@
 package routers
 
 import (
+	"fmt"
+	"net/http"
+	"os"
+	"strconv"
+	"time"
+
 	"mooc-manus/api/handlers"
 	"mooc-manus/config"
 	app_svc "mooc-manus/internal/applications/services"
 	"mooc-manus/internal/domains/models/tracing"
 	domain_svc "mooc-manus/internal/domains/services"
 	"mooc-manus/internal/domains/services/agents"
+	"mooc-manus/internal/domains/services/evaluation"
 	"mooc-manus/internal/domains/services/flows"
 	"mooc-manus/internal/domains/services/tools"
 	"mooc-manus/internal/infra/external/file_storage"
 	"mooc-manus/internal/infra/external/health_checker"
+	"mooc-manus/internal/infra/mq"
 	"mooc-manus/internal/infra/repositories"
-	"net/http"
+	"mooc-manus/internal/infra/scheduler"
+	"mooc-manus/internal/infra/storage"
 
 	"github.com/gin-gonic/gin"
+	"github.com/hibiken/asynq"
+	"github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
 )
 
 // corsMiddleware 处理跨域请求，含 OPTIONS 预检
@@ -72,6 +84,26 @@ func InitRouter() *gin.Engine {
 	}
 	fs := file_storage.NewLocalFileStorage(rootDir)
 
+	// 1.5 评测模块 Repository
+	evalCaseRepo := repositories.NewEvalCaseRepository(storage.GetPostgresClient())
+	evalTaskRepo := repositories.NewEvalTaskRepository(storage.GetPostgresClient())
+	evalInstRepo := repositories.NewEvalRunInstanceRepository(storage.GetPostgresClient())
+	evalResultRepo := repositories.NewEvalResultRepository(storage.GetPostgresClient())
+	evalSnapshotRepo := repositories.NewEvalAgentSnapshotRepository(storage.GetPostgresClient())
+
+	// 1.6 评测 Asynq 客户端（Enabled=false 时 nil，Application 层降级为跳过 enqueue）
+	var asynqClient *mq.Client
+	if config.Cfg != nil && config.Cfg.Evaluation.Enabled {
+		asynqClient = mq.NewClient(config.Cfg.Asynq)
+	}
+
+	// 1.7 评测装配用的原始 zap logger（domain 层要求 *zap.Logger）
+	// 使用 zap.NewProduction 作为主 logger；若初始化失败则回落 NopLogger。
+	evalZap, err := zap.NewProduction()
+	if err != nil {
+		evalZap = zap.NewNop()
+	}
+
 	// ============================================================
 	// 第二层：Domain Service 层（按依赖拓扑顺序初始化）
 	// ============================================================
@@ -115,6 +147,38 @@ func InitRouter() *gin.Engine {
 	a2aDomainSvc := agents.NewA2ADomainService(baseAgentDomainSvc, appConfigDomainSvc, providerDomainSvc, functionDomainSvc)
 	baseFlowDomainSvc := flows.NewBaseFlowDomainService(appConfigDomainSvc, providerDomainSvc, functionDomainSvc)
 
+	// 2.4 评测模块 Domain 依赖
+	// 参数值来自 EvaluationConfig：verify 脚本超时 / 心跳间隔 / 实例总超时；
+	// snapshot 冻结 + M×N instance 装配都由 domain 层负责，此处仅注入依赖。
+	evalCfg := config.EvaluationConfig{}
+	if config.Cfg != nil {
+		evalCfg = config.Cfg.Evaluation
+	}
+	verifyRunner := evaluation.NewVerifyRunner(
+		time.Duration(evalCfg.VerifyScriptTimeoutSec)*time.Second,
+		evalCfg.VerifyOutputCapBytes,
+	)
+	traceAggregator := evaluation.NewTraceAggregator(aiSpanRepo, evalZap)
+	internalChatRunner := evaluation.NewInternalChatRunner(baseAgentDomainSvc)
+
+	workerID := hostname() + "-" + strconv.Itoa(os.Getpid())
+	instanceExecutor := evaluation.NewInstanceExecutor(
+		evalInstRepo, evalTaskRepo, evalResultRepo, evalSnapshotRepo,
+		verifyRunner, internalChatRunner, traceAggregator, tracer,
+		skillExecutor, nativeToolsProvider,
+		workerID,
+		time.Duration(evalCfg.HeartbeatIntervalSec)*time.Second,
+		time.Duration(evalCfg.InstanceTotalTimeoutSec)*time.Second,
+		evalZap,
+	)
+
+	// AppConfigDomainService.GetById 已经满足 evaluation.AppConfigLoader 接口，直接注入。
+	// dlqInspector 目前 nil（M9 后续补 asynq.Inspector 适配器），ArchiveDeadTasks 会降级返回 (0, nil)。
+	evalDomainSvc := evaluation.NewEvaluationDomainService(
+		evalCaseRepo, evalTaskRepo, evalInstRepo, evalResultRepo, evalSnapshotRepo,
+		appConfigDomainSvc, instanceExecutor, nil, evalZap,
+	)
+
 	// ============================================================
 	// 第三层：Application Service 层（全模块并列）
 	// ============================================================
@@ -138,6 +202,18 @@ func InitRouter() *gin.Engine {
 	// 3.4 Tracing 模块 Application Service
 	traceAppSvc := app_svc.NewTraceApplicationService(aiSpanRepo)
 
+	// 3.5 评测 Application Service
+	// mq 允许 nil（Evaluation.Enabled=false 或 asynq 未装配时），此时 CreateTask/Retry 会跳过 enqueue，
+	// 由 cron 巡检层兜底把长时间未被消费的实例重新推进。
+	var evalMQ app_svc.MQEnqueuer
+	if asynqClient != nil {
+		evalMQ = asynqClient
+	}
+	evalAppSvc := app_svc.NewEvaluationApplicationService(
+		evalDomainSvc, evalCaseRepo, evalTaskRepo, evalInstRepo, evalResultRepo,
+		appConfigDomainSvc, evalMQ, evalCfg, evalZap,
+	)
+
 	// ============================================================
 	// 第四层：Handler 层（全模块并列）
 	// ============================================================
@@ -155,6 +231,61 @@ func InitRouter() *gin.Engine {
 
 	// 4.4 Tracing 模块 Handler
 	traceHandler := handlers.NewTraceHandler(traceAppSvc)
+
+	// 4.5 评测模块 Handler
+	evalHandler := handlers.NewEvalHandler(evalAppSvc)
+
+	// ============================================================
+	// 评测基础设施启动：Asynq server + Cron 巡检
+	// ============================================================
+	var asynqSrv *asynq.Server
+	if config.Cfg != nil && config.Cfg.Evaluation.Enabled && asynqClient != nil {
+		rdb := redis.NewClient(&redis.Options{
+			Addr:     config.Cfg.Asynq.RedisAddr,
+			Password: config.Cfg.Asynq.RedisPassword,
+			DB:       config.Cfg.Asynq.RedisDB,
+		})
+		// 每个 case 的并发上限；TTL 兜底：实例总超时 + 60s 缓冲，避免异常退出令牌泄漏
+		gate := mq.NewCaseTokenGate(rdb,
+			evalCfg.CaseConcurrencyLimit,
+			time.Duration(evalCfg.InstanceTotalTimeoutSec+60)*time.Second,
+		)
+		runInstanceHandler := mq.NewRunInstanceHandler(instanceExecutor, evalInstRepo, gate)
+		srv, serr := mq.StartServer(config.Cfg.Asynq, evalCfg, runInstanceHandler)
+		if serr != nil {
+			evalZap.Error("asynq server 启动失败", zap.Error(serr))
+		} else {
+			asynqSrv = srv
+			evalZap.Info("asynq server started",
+				zap.String("redis_addr", config.Cfg.Asynq.RedisAddr))
+		}
+	}
+	_ = asynqSrv // 目前 InitRouter 无优雅停机；保留变量供后续 shutdown 钩子使用
+
+	// Cron 巡检（M7）：sweeper / reconciler / dlq_archiver
+	if config.Cfg != nil && config.Cfg.Evaluation.Enabled {
+		sched := scheduler.New(evalZap)
+		if evalCfg.CronSweeperIntervalSec > 0 {
+			_ = sched.AddFunc(
+				fmt.Sprintf("*/%d * * * * *", evalCfg.CronSweeperIntervalSec),
+				scheduler.NewSweeperJob(evalDomainSvc, evalZap).Run,
+			)
+		}
+		if evalCfg.CronReconcilerIntervalSec > 0 {
+			_ = sched.AddFunc(
+				fmt.Sprintf("*/%d * * * * *", evalCfg.CronReconcilerIntervalSec),
+				scheduler.NewReconcilerJob(evalDomainSvc, evalZap).Run,
+			)
+		}
+		if evalCfg.CronDLQArchiveIntervalSec > 0 {
+			_ = sched.AddFunc(
+				fmt.Sprintf("*/%d * * * * *", evalCfg.CronDLQArchiveIntervalSec),
+				scheduler.NewDLQArchiverJob(evalDomainSvc, evalZap).Run,
+			)
+		}
+		sched.Start()
+		evalZap.Info("eval cron scheduler started")
+	}
 
 	// ============================================================
 	// 路由注册
@@ -248,6 +379,30 @@ func InitRouter() *gin.Engine {
 		skillImportTask.POST("/list", skillHandler.ImportTaskList)
 		skillImportTask.POST("/delete", skillHandler.ImportTaskDelete)
 	}
+	eval := r.Group("/api/eval")
+	{
+		eval.POST("/cases/upload-content", evalHandler.UploadContent)
+		eval.POST("/cases", evalHandler.CreateCase)
+		eval.GET("/cases", evalHandler.ListCases)
+		eval.GET("/cases/:id", evalHandler.GetCase)
+		eval.PUT("/cases/:id", evalHandler.UpdateCase)
+		eval.DELETE("/cases/:id", evalHandler.DeleteCase)
+
+		eval.POST("/tasks", evalHandler.CreateTask)
+		eval.GET("/tasks", evalHandler.ListTasks)
+		eval.GET("/tasks/:id", evalHandler.GetTask)
+		eval.POST("/tasks/:id/retry", evalHandler.RetryTask)
+		eval.DELETE("/tasks/:id", evalHandler.DeleteTask)
+		eval.GET("/tasks/:id/instances", evalHandler.ListInstances)
+
+		eval.GET("/instances/:id", evalHandler.GetInstance)
+		eval.GET("/instances/:id/trace", evalHandler.GetInstanceTrace)
+		eval.POST("/instances/:id/retry", evalHandler.RetryInstance)
+		eval.DELETE("/instances/:id", evalHandler.DeleteInstance)
+
+		eval.GET("/agent-configs", evalHandler.ListAgentConfigs)
+	}
+
 	skillVersion := r.Group("/api/skill/version")
 	{
 		skillVersion.POST("/create", skillHandler.VersionCreate)
@@ -261,4 +416,14 @@ func InitRouter() *gin.Engine {
 	}
 
 	return r
+}
+
+// hostname 返回稳定的主机名；失败或空值时返回 "unknown"。
+// 用于组装评测 worker 的 workerID（hostname-pid），便于排障。
+func hostname() string {
+	h, err := os.Hostname()
+	if err != nil || h == "" {
+		return "unknown"
+	}
+	return h
 }

@@ -29,4 +29,5 @@ type SpanRepository interface {
 	BatchInsert(ctx context.Context, spans []*Span) error
 	FindByTraceID(ctx context.Context, traceID string) ([]*SpanNode, error)
 	ListTraces(ctx context.Context, filter TraceFilter, page, pageSize int) ([]*TraceSummary, int64, error)
+	ListByConversationID(ctx context.Context, conversationID string) ([]*Span, error)
 }

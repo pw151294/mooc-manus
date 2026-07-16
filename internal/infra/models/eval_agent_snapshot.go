@@ -9,7 +9,7 @@ import (
 type EvalAgentSnapshotPO struct {
 	ID                string         `gorm:"type:uuid;primaryKey"`
 	SourceAppConfigID string         `gorm:"type:uuid;index"`
-	Model             string         `gorm:"type:varchar(64)"`
+	Model             datatypes.JSON `gorm:"type:jsonb"`
 	SystemPrompt      string         `gorm:"type:text"`
 	ToolsConfig       datatypes.JSON `gorm:"type:jsonb"`
 	MCPConfig         datatypes.JSON `gorm:"type:jsonb"`

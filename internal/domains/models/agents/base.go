@@ -1,6 +1,7 @@
 package agents
 
 import (
+	appconfig "mooc-manus/internal/domains/models"
 	"mooc-manus/internal/domains/models/file"
 	"mooc-manus/internal/domains/models/interrupt"
 )
@@ -22,9 +23,10 @@ type ChatRequest struct {
 	ProviderIds    []string
 	SkillRefs      []SkillRef
 	Files          []file.File
-	PlanMode       bool                  // 规划模式开关：开启后框架自动注入 PlanMode 提示词并实现记忆持久化
-	EnableSubagent bool                  // PlanMode 下启用子智能体功能
-	PendingSink    interrupt.PendingSink // HITL 审批管理器（由 application 层注入）
+	PlanMode       bool                   // 规划模式开关：开启后框架自动注入 PlanMode 提示词并实现记忆持久化
+	EnableSubagent bool                   // PlanMode 下启用子智能体功能
+	PendingSink    interrupt.PendingSink  // HITL 审批管理器（由 application 层注入）
+	ConfigOverride *appconfig.AppConfigDO // 评测机制以 AgentSnapshot.ToAppConfig() 冻结数据驱动 Agent 执行（spec §3.5）。
 }
 
 type AgentPlanCreateRequest struct {

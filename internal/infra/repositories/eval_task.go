@@ -10,7 +10,8 @@ import (
 )
 
 type TaskListFilter struct {
-	Status evaluation.TaskStatus
+	Status   evaluation.TaskStatus
+	StatusIn []evaluation.TaskStatus // StatusIn 多状态筛选
 }
 
 type EvalTaskRepository interface {
@@ -47,7 +48,14 @@ func (r *evalTaskRepositoryImpl) Get(ctx context.Context, id string) (*evaluatio
 func (r *evalTaskRepositoryImpl) List(ctx context.Context, filter TaskListFilter, page, size int) ([]*evaluation.Task, int64, error) {
 	query := r.db.WithContext(ctx).Model(&models.EvalTaskPO{})
 
-	if filter.Status != "" {
+	// StatusIn 优先；否则回落到单值 Status
+	if len(filter.StatusIn) > 0 {
+		statuses := make([]string, 0, len(filter.StatusIn))
+		for _, s := range filter.StatusIn {
+			statuses = append(statuses, string(s))
+		}
+		query = query.Where("status IN ?", statuses)
+	} else if filter.Status != "" {
 		query = query.Where("status = ?", string(filter.Status))
 	}
 

@@ -26,6 +26,10 @@ type NativeToolsProvider interface {
 
 	// ConversationPlanDir 返回 conversationId 对应的持久化规划目录路径（不在 Cleanup 时删除）
 	ConversationPlanDir(conversationId string) string
+
+	// MessageWorkspaceDir 返回 messageId 对应的临时 workspace 绝对路径（可能未创建，仅拼接）
+	// 评测系统 InstanceExecutor 用此路径作为 verify_script / init_script 的 workdir
+	MessageWorkspaceDir(messageId string) string
 }
 
 // NewNativeToolsProvider 单例装配 NativeToolsProvider
@@ -111,4 +115,10 @@ func (p *nativeToolsProviderImpl) ConversationPlanDir(conversationId string) str
 
 func (p *nativeToolsProviderImpl) Cleanup(messageId string) error {
 	return p.workspace.Cleanup(messageId)
+}
+
+// MessageWorkspaceDir 转发到 NativeWorkspace.WorkspaceDir（只拼路径不创建目录）
+// 空 messageId 返回空串，调用方需自行处理
+func (p *nativeToolsProviderImpl) MessageWorkspaceDir(messageId string) string {
+	return p.workspace.WorkspaceDir(messageId)
 }

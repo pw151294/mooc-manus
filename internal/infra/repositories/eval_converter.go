@@ -198,7 +198,12 @@ func snapshotToDO(po *models.EvalAgentSnapshotPO) *evaluation.AgentSnapshot {
 	if po == nil {
 		return nil
 	}
-	var toolsConfig, mcpConfig, a2aConfig map[string]any
+	var toolsConfig, mcpConfig map[string]any
+	var a2aConfig []evaluation.AgentA2AServer
+	var model evaluation.ModelSnapshot
+	if po.Model != nil {
+		_ = json.Unmarshal(po.Model, &model)
+	}
 	if po.ToolsConfig != nil {
 		_ = json.Unmarshal(po.ToolsConfig, &toolsConfig)
 	}
@@ -211,7 +216,7 @@ func snapshotToDO(po *models.EvalAgentSnapshotPO) *evaluation.AgentSnapshot {
 	return &evaluation.AgentSnapshot{
 		ID:                po.ID,
 		SourceAppConfigID: po.SourceAppConfigID,
-		Model:             po.Model,
+		Model:             model,
 		SystemPrompt:      po.SystemPrompt,
 		ToolsConfig:       toolsConfig,
 		MCPConfig:         mcpConfig,
@@ -224,13 +229,14 @@ func snapshotToPO(do *evaluation.AgentSnapshot) *models.EvalAgentSnapshotPO {
 	if do == nil {
 		return nil
 	}
+	modelJSON, _ := json.Marshal(do.Model)
 	toolsConfigJSON, _ := json.Marshal(do.ToolsConfig)
 	mcpConfigJSON, _ := json.Marshal(do.MCPConfig)
 	a2aConfigJSON, _ := json.Marshal(do.A2AConfig)
 	return &models.EvalAgentSnapshotPO{
 		ID:                do.ID,
 		SourceAppConfigID: do.SourceAppConfigID,
-		Model:             do.Model,
+		Model:             datatypes.JSON(modelJSON),
 		SystemPrompt:      do.SystemPrompt,
 		ToolsConfig:       datatypes.JSON(toolsConfigJSON),
 		MCPConfig:         datatypes.JSON(mcpConfigJSON),

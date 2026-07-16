@@ -10,8 +10,9 @@ import (
 )
 
 type InstanceListFilter struct {
-	TaskID string
-	Status evaluation.InstanceStatus
+	TaskID   string
+	Status   evaluation.InstanceStatus
+	StatusIn []evaluation.InstanceStatus // StatusIn 多状态筛选
 }
 
 type EvalRunInstanceRepository interface {
@@ -62,7 +63,14 @@ func (r *evalRunInstanceRepositoryImpl) List(ctx context.Context, filter Instanc
 	if filter.TaskID != "" {
 		query = query.Where("task_id = ?", filter.TaskID)
 	}
-	if filter.Status != "" {
+	// StatusIn 优先；否则回落到单值 Status
+	if len(filter.StatusIn) > 0 {
+		statuses := make([]string, 0, len(filter.StatusIn))
+		for _, s := range filter.StatusIn {
+			statuses = append(statuses, string(s))
+		}
+		query = query.Where("status IN ?", statuses)
+	} else if filter.Status != "" {
 		query = query.Where("status = ?", string(filter.Status))
 	}
 

@@ -57,3 +57,24 @@ bash_timeout_default = 120
 bash_timeout_max = 600
 bash_output_cap = 32768
 bash_concurrency = 4
+
+[evaluation]
+enabled = true
+worker_concurrency_default = 5
+worker_concurrency_high = 5
+case_concurrency_limit = 4
+instance_total_timeout_sec = 900
+verify_script_timeout_sec = 60
+verify_output_cap_bytes = 65536
+heartbeat_interval_sec = 15
+heartbeat_stale_threshold_sec = 90
+cron_sweeper_interval_sec = 30
+cron_reconciler_interval_sec = 60
+cron_dlq_archive_interval_sec = 300
+upload_content_max_bytes = 262144
+workspace_root = ""
+
+[asynq]
+redis_addr = "127.0.0.1:6379"
+redis_password = ""
+redis_db = 1

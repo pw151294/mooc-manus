@@ -64,6 +64,10 @@ func (f *fakeNativeToolsProvider) ConversationPlanDir(conversationId string) str
 	return "/tmp/plans/" + conversationId
 }
 
+func (f *fakeNativeToolsProvider) MessageWorkspaceDir(messageId string) string {
+	return "/tmp/native-workspace/" + messageId
+}
+
 func newSvc(skillFail, nativeFail error) (*BaseAgentApplicationServiceImpl, *fakeSkillExecutor, *fakeNativeToolsProvider) {
 	skill := &fakeSkillExecutor{failWith: skillFail}
 	native := &fakeNativeToolsProvider{failWith: nativeFail}

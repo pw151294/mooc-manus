@@ -187,3 +187,45 @@ func (s *Span) LogsSnapshot() []LogEntry {
 	copy(out, s.logs)
 	return out
 }
+
+// AiSpanPOFields 是 tracing 域外向内构造 Span 的 DTO，
+// 用于解耦 tracing 与 infra：Repository 在查询侧把 PO 字段填入本结构，
+// 再交给 NewSpanForQuery 组装成 *Span，避免 tracing 反向依赖 infra 层。
+type AiSpanPOFields struct {
+	TraceID        string
+	SpanID         int32
+	ParentSpanID   int32
+	SpanType       string
+	OperationName  string
+	ConversationID string
+	AgentName      string
+	StartTime      int64
+	EndTime        int64
+	LatencyMs      int32
+	IsError        bool
+	Tags           map[string]interface{}
+	Logs           []LogEntry
+}
+
+// NewSpanForQuery 供 Repository 反序列化 PO 时构造只读 Span。
+// 注意：此构造出的 Span 不会挂 commitFn，End() 不会写库；仅用于查询/聚合路径。
+func NewSpanForQuery(f *AiSpanPOFields) *Span {
+	if f == nil {
+		return nil
+	}
+	return &Span{
+		TraceID:        f.TraceID,
+		SpanID:         f.SpanID,
+		ParentSpanID:   f.ParentSpanID,
+		SpanType:       SpanType(f.SpanType),
+		OperationName:  f.OperationName,
+		ConversationID: f.ConversationID,
+		AgentName:      f.AgentName,
+		StartTime:      f.StartTime,
+		EndTime:        f.EndTime,
+		LatencyMs:      f.LatencyMs,
+		IsError:        f.IsError,
+		tags:           f.Tags,
+		logs:           f.Logs,
+	}
+}

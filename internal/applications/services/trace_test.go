@@ -23,6 +23,9 @@ func (r *fakeSpanRepo) FindByTraceID(_ context.Context, _ string) ([]*tracing.Sp
 func (r *fakeSpanRepo) ListTraces(context.Context, tracing.TraceFilter, int, int) ([]*tracing.TraceSummary, int64, error) {
 	return r.list, int64(len(r.list)), nil
 }
+func (r *fakeSpanRepo) ListByConversationID(context.Context, string) ([]*tracing.Span, error) {
+	return nil, nil
+}
 
 func TestTraceService_GetTraceDetail_HappyPath(t *testing.T) {
 	repo := &fakeSpanRepo{
