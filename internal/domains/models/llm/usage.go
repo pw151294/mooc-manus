@@ -1,0 +1,7 @@
+package llm
+
+type Usage struct {
+	PromptTokens     int64
+	CompletionTokens int64
+	TotalTokens      int64
+}

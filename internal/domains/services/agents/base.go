@@ -492,9 +492,16 @@ func (a *BaseAgent) recordLLMStreamError(llmSpan *tracing.Span, errMsg string) {
 	llmSpan.MarkError()
 }
 
-// finalizeLLMSpanSuccess LLM 调用成功收尾：补 tool_calls_count tag + 完成日志
+// finalizeLLMSpanSuccess LLM 调用成功收尾：补 tool_calls_count tag + usage tag + 完成日志
 func (a *BaseAgent) finalizeLLMSpanSuccess(llmSpan *tracing.Span, toolCallsCount int) {
 	llmSpan.SetTag("llm.tool_calls_count", toolCallsCount)
+
+	// 写入 usage tag（使用 llm.io.*_units 避免脱敏正则误杀）
+	usage := a.invoker.LastUsage()
+	llmSpan.SetTag("llm.io.prompt_units", usage.PromptTokens)
+	llmSpan.SetTag("llm.io.completion_units", usage.CompletionTokens)
+	llmSpan.SetTag("llm.io.total_units", usage.TotalTokens)
+
 	llmSpan.AddLog("INFO", "llm.stream.completed", nil)
 }
 

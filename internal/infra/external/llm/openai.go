@@ -35,7 +35,7 @@ func NewOpenAiLLM(config models.ModelConfig) *OpenAiLLM {
 	return llm
 }
 
-func (l *OpenAiLLM) Invoke(messages []openai.ChatCompletionMessageParamUnion, tools []openai.ChatCompletionToolParam) (openai.ChatCompletionMessage, error) {
+func (l *OpenAiLLM) Invoke(messages []openai.ChatCompletionMessageParamUnion, tools []openai.ChatCompletionToolParam) (openai.ChatCompletionMessage, openai.CompletionUsage, error) {
 	params := openai.ChatCompletionNewParams{}
 	params.Model = l.modelName
 	params.Messages = messages
@@ -47,15 +47,15 @@ func (l *OpenAiLLM) Invoke(messages []openai.ChatCompletionMessageParamUnion, to
 	logger.Info("begin chat with llm", zap.String("model", l.modelName))
 	completion, err := l.client.Chat.Completions.New(timeoutCtx, params)
 	if err != nil {
-		return openai.ChatCompletionMessage{}, err
+		return openai.ChatCompletionMessage{}, openai.CompletionUsage{}, err
 	}
 	if len(completion.Choices) == 0 {
-		return openai.ChatCompletionMessage{}, fmt.Errorf("llm返回空响应")
+		return openai.ChatCompletionMessage{}, openai.CompletionUsage{}, fmt.Errorf("llm返回空响应")
 	}
-	return completion.Choices[0].Message, nil
+	return completion.Choices[0].Message, completion.Usage, nil
 }
 
-func (l *OpenAiLLM) StreamingInvoke(messages []openai.ChatCompletionMessageParamUnion, tools []openai.ChatCompletionToolParam, eventCh chan<- events.AgentEvent) openai.ChatCompletionMessage {
+func (l *OpenAiLLM) StreamingInvoke(messages []openai.ChatCompletionMessageParamUnion, tools []openai.ChatCompletionToolParam, eventCh chan<- events.AgentEvent) (openai.ChatCompletionMessage, openai.CompletionUsage) {
 	params := openai.ChatCompletionNewParams{}
 	params.Model = l.modelName
 	params.Messages = messages
@@ -91,7 +91,7 @@ func (l *OpenAiLLM) StreamingInvoke(messages []openai.ChatCompletionMessageParam
 	}
 	close(eventCh)
 	if len(acc.Choices) == 0 {
-		return openai.ChatCompletionMessage{}
+		return openai.ChatCompletionMessage{}, openai.CompletionUsage{}
 	}
-	return acc.Choices[0].Message
+	return acc.Choices[0].Message, acc.Usage
 }

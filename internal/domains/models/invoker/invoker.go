@@ -13,4 +13,5 @@ import (
 type Invoker interface {
 	Invoke(messages []llm.Message, tools []llm.Tool) (llm.Message, error)
 	StreamingInvoke(messages []llm.Message, tools []llm.Tool, eventCh chan<- events.AgentEvent) llm.Message
+	LastUsage() llm.Usage // 新增：获取最近一次调用的 token 消耗
 }
