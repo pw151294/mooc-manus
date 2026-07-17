@@ -7,12 +7,13 @@
 
 **前置**：
 - 后端已按实施计划完成 M1-M8；
-- 服务在本机 `:8080` 可访问；
 - Redis (`db 1`) 已清空 (`redis-cli -n 1 FLUSHDB`)；
 - PostgreSQL 5 张 `eval_*` 表已 AutoMigrate 生成；
 - `.env` 里配置有能真实调用的 LLM API key（不建议 mock，E2E 就是要打真链路）；
 - 已存在至少 1 个 `appConfig` 记录（NATIVE 工具三件套齐全），记为 `${AGENT_ID}`；
-- 前端 `mooc-manus-web` 已跑起来（可选，若只走 API 层验证可省略）。
+- 前后端服务已启动：
+  - 后端服务地址：http://localhost:8080/
+  - 前端服务地址：http://localhost:3000/
 
 **约定**：
 - 所有 curl 命令写完执行；输出保留到 `.harness/evidence/2026-07-16-eval/*.log`；
