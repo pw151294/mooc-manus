@@ -24,6 +24,8 @@ type EvalRunInstancePO struct {
 	DeadlineAt            *time.Time
 	WorkerID              string `gorm:"type:varchar(64)"`
 	ErrorMessage          string `gorm:"type:text"`
+	CreatedAt             time.Time
+	UpdatedAt             time.Time
 }
 
 func (EvalRunInstancePO) TableName() string {
