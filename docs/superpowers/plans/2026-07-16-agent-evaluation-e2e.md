@@ -339,4 +339,42 @@ redis-cli -n 1 GET 'eval:concurrency:case:${CASE_ID}'
 
 ---
 
-**End of E2E Verification Document**
+## E-13 主流程埋点日志矩阵（问题定位入口）
+
+> 前置：pkg/logger 的全局 lumberjack sink 会把评测子系统的 zap.Logger 落盘到
+> `mooc-manus/logs/manus.log`。route.go 已把 `evalZap` 切到 `logger.Zap().Named("eval")`；
+> mq handler 内部单独 `Named("eval.mq")`。所有埋点日志的 msg 字段以 `EVAL_` 前缀
+> 打头，可用 `grep 'EVAL_' logs/manus.log` 一次性拉出评测主流水。
+
+### E-13.1 埋点节点矩阵
+
+| # | 节点 | 触发点（文件:行号语义） | msg 关键字 | 关键字段 |
+|---|---|---|---|---|
+| 1 | 任务创建入口 | `applications/services/eval.go CreateTask` | `EVAL_TASK_CREATE_START` / `EVAL_TASK_CREATE_DONE` / `EVAL_TASK_CREATE_ERR` | `name / m_cases / n_agents / total_expect / task_id / instance_count` |
+| 2 | MQ 入队 | `applications/services/eval.go enqueueInstances` | `EVAL_MQ_ENQUEUE_START` / `EVAL_MQ_ENQUEUE_DONE` / `EVAL_MQ_ENQUEUE_ITEM_ERR` / `EVAL_MQ_NOT_WIRED_SKIP_ENQUEUE` | `queue(default\|high) / count / ok / fail` |
+| 3 | MQ 消费 | `infra/mq/run_instance_handler.go ProcessTask` | `EVAL_MQ_CONSUME_START` / `EVAL_MQ_CONSUME_DONE` / `EVAL_MQ_PAYLOAD_UNMARSHAL_ERR` / `EVAL_MQ_INSTANCE_MISS` | `instance_id / attempt / queue_lag_ms / consume_duration_ms / execute_err` |
+| 4 | Case 令牌桶 | 同上 | `EVAL_MQ_TOKEN_ACQUIRED` / `EVAL_MQ_TOKEN_BUSY` / `EVAL_MQ_TOKEN_ACQUIRE_ERR` / `EVAL_MQ_TOKEN_RELEASE_ERR` | `instance_id / case_id` |
+| 5 | Executor 入口 & CAS | `domains/services/evaluation/executor.go Execute` | `EVAL_STAGE_INIT` / `EVAL_STAGE_INIT_CAS_MISS` / `EVAL_STAGE_INIT_LOAD_ERR` | `instance_id / task_id / case_id / conversation_id / message_id / attempt / worker_id / has_init_script` |
+| 6 | init_script 阶段 | `executor.go executeStages` | `EVAL_STAGE_INIT_SCRIPT_DONE` | `workdir / exit_code / duration_ms / run_err` |
+| 7 | Snapshot 加载 | 同上 | `EVAL_STAGE_SNAPSHOT_LOAD_ERR` | `snapshot_id` |
+| 8 | Chat 阶段 | 同上 | `EVAL_STAGE_RUN_ENTER` / `EVAL_STAGE_RUN_DONE` / `EVAL_STAGE_RUN_ERR` / `EVAL_STAGE_RUN_TIMEOUT` / `EVAL_STAGE_RUN_AGENT_ERR` / `EVAL_STAGE_RUN_CAS_MISS` | `snapshot_id / model / workdir / prompt_len / duration_ms / last_msg_len` |
+| 9 | verify_script 阶段 | 同上 | `EVAL_STAGE_VERIFY_DONE` / `EVAL_STAGE_VERIFY_CAS_MISS` | `passed / exit_code / stdout_bytes / stderr_bytes / duration_ms / run_err` |
+| 10 | 指标聚合 | `executor.go finalizeVerify` | `EVAL_STAGE_AGGREGATE` | `trace_id / degraded / prompt_tokens / completion_tokens / total_tokens / agent_latency_ms` |
+| 11 | 终态收敛 | 同上 | `EVAL_STAGE_FINALIZE` / `EVAL_STAGE_FINALIZE_CAS_MISS` / `EVAL_STAGE_FINALIZE_RESULT_UPSERT_ERR` / `EVAL_STAGE_FINALIZE_RECOUNT_ERR` | `final_status / passed / verify_exit_code / total_tokens / agent_latency_ms / error_log_bytes` |
+| 12 | 错误收敛（init/chat 失败路径） | `executor.go finalizeError` | `EVAL_STAGE_FINALIZE_ERROR` / `EVAL_STAGE_FINALIZE_ERROR_CAS_MISS` | `from / to / error_msg` |
+
+### E-13.2 日志查询秘籍
+
+一条实例的完整链路（15 条上下顺序稳定的埋点）：
+```bash
+INST_ID=<your-instance-id>
+grep "$INST_ID" mooc-manus/logs/manus.log | grep -E 'EVAL_(MQ|STAGE|TASK)' | less
+```
+
+一次任务的所有实例（按 task_id 聚合）：
+```bash
+TASK_ID=<your-task-id>
+grep "$TASK_ID" mooc-manus/logs/manus.log | grep 'EVAL_STAGE_FINALIZE'
+```
+
+

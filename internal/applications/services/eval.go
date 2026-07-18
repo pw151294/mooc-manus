@@ -212,8 +212,16 @@ func (s *evalAppImpl) DeleteCase(ctx context.Context, id string) error {
 // CreateTask 编排：domain 落 task + instances → application 拉出所有 instance → 并行 Enqueue。
 // Enqueue 单点失败不阻塞返回；巡检 cron 会兜底把长时间处于 PENDING 且 queued_at IS NULL 的实例重新推进。
 func (s *evalAppImpl) CreateTask(ctx context.Context, req *dtos.TaskCreateRequest) (*dtos.TaskView, error) {
+	s.logger.Info("EVAL_TASK_CREATE_START",
+		zap.String("name", req.Name),
+		zap.Int("m_cases", len(req.CaseIDs)),
+		zap.Int("n_agents", len(req.AgentConfigIDs)),
+		zap.Int("total_expect", len(req.CaseIDs)*len(req.AgentConfigIDs)))
 	task, err := s.domain.CreateTask(ctx, req.Name, req.CaseIDs, req.AgentConfigIDs)
 	if err != nil {
+		s.logger.Error("EVAL_TASK_CREATE_ERR",
+			zap.String("name", req.Name),
+			zap.Error(err))
 		return nil, err
 	}
 	// 拉出该 task 下所有实例（M×N，通常 <= 数百，走大 size 一次拉完）
@@ -223,6 +231,10 @@ func (s *evalAppImpl) CreateTask(ctx context.Context, req *dtos.TaskCreateReques
 			zap.String("task_id", task.ID), zap.Error(err))
 		return taskDOToView(task), nil
 	}
+	s.logger.Info("EVAL_TASK_CREATE_DONE",
+		zap.String("task_id", task.ID),
+		zap.Int("instance_count", len(insts)),
+		zap.Int("total_count", task.TotalCount))
 	s.enqueueInstances(ctx, insts, false)
 	return taskDOToView(task), nil
 }
@@ -389,11 +401,25 @@ func (s *evalAppImpl) ListAgentConfigs(ctx context.Context) ([]dtos.AgentConfigV
 // 单点失败仅日志；用 semaphore 控制并发（默认 8）。
 func (s *evalAppImpl) enqueueInstances(ctx context.Context, insts []*ev.RunInstance, useHigh bool) {
 	if s.mq == nil || len(insts) == 0 {
+		if s.mq == nil {
+			s.logger.Warn("EVAL_MQ_NOT_WIRED_SKIP_ENQUEUE",
+				zap.Int("skipped_count", len(insts)),
+				zap.String("hint", "Evaluation.Enabled=false 或 asynq 未装配，实例只能靠 cron 兜底"))
+		}
 		return
 	}
+	queue := "default"
+	if useHigh {
+		queue = "high"
+	}
+	s.logger.Info("EVAL_MQ_ENQUEUE_START",
+		zap.String("queue", queue),
+		zap.Int("count", len(insts)))
 	const parallelism = 8
 	sem := make(chan struct{}, parallelism)
 	var wg sync.WaitGroup
+	var okCount, failCount int32
+	var mu sync.Mutex
 	for _, inst := range insts {
 		wg.Add(1)
 		sem <- struct{}{}
@@ -401,12 +427,25 @@ func (s *evalAppImpl) enqueueInstances(ctx context.Context, insts []*ev.RunInsta
 			defer wg.Done()
 			defer func() { <-sem }()
 			if err := s.mq.EnqueueRunInstance(ctx, instID, attempt, useHigh); err != nil {
-				s.logger.Warn("enqueue run instance failed",
-					zap.String("id", instID), zap.Error(err))
+				s.logger.Warn("EVAL_MQ_ENQUEUE_ITEM_ERR",
+					zap.String("instance_id", instID),
+					zap.String("queue", queue),
+					zap.Error(err))
+				mu.Lock()
+				failCount++
+				mu.Unlock()
+				return
 			}
+			mu.Lock()
+			okCount++
+			mu.Unlock()
 		}(inst.ID, inst.Attempt)
 	}
 	wg.Wait()
+	s.logger.Info("EVAL_MQ_ENQUEUE_DONE",
+		zap.String("queue", queue),
+		zap.Int32("ok", okCount),
+		zap.Int32("fail", failCount))
 }
 
 // normalizePage 兜底默认值，避免 form 未传时 Offset 变负数。
