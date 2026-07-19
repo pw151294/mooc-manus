@@ -22,6 +22,7 @@ import (
 	"mooc-manus/internal/infra/repositories"
 	"mooc-manus/internal/infra/scheduler"
 	"mooc-manus/internal/infra/storage"
+	"mooc-manus/pkg/logger"
 
 	"github.com/gin-gonic/gin"
 	"github.com/hibiken/asynq"
@@ -98,11 +99,10 @@ func InitRouter() *gin.Engine {
 	}
 
 	// 1.7 评测装配用的原始 zap logger（domain 层要求 *zap.Logger）
-	// 使用 zap.NewProduction 作为主 logger；若初始化失败则回落 NopLogger。
-	evalZap, err := zap.NewProduction()
-	if err != nil {
-		evalZap = zap.NewNop()
-	}
+	// 复用 pkg/logger 的全局 lumberjack sink，评测日志与 manus.log 主流一起落盘，
+	// 便于按 instance_id / task_id 直接 grep logs/manus.log 定位问题。
+	// Named("eval") 让 caller 字段前带 "eval." 便于筛选。
+	evalZap := logger.Zap().Named("eval")
 
 	// ============================================================
 	// 第二层：Domain Service 层（按依赖拓扑顺序初始化）
