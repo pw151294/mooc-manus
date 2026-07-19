@@ -11,6 +11,7 @@ import (
 
 	ev "mooc-manus/internal/domains/models/evaluation"
 	"mooc-manus/internal/infra/repositories"
+	"mooc-manus/pkg/logger"
 )
 
 // ErrCaseHasRunningReferences DeleteCase 前置校验：case 仍被进行中的 task/instance 引用。
@@ -37,8 +38,6 @@ type serviceImpl struct {
 	appConfigLoader AppConfigLoader
 	executor        *InstanceExecutor
 	dlqInspector    DLQInspector
-
-	logger *zap.Logger
 }
 
 // NewEvaluationDomainService 构造 EvaluationDomainService。
@@ -47,7 +46,6 @@ type serviceImpl struct {
 //     未注入 appConfigLoader → CreateTask 返回错误；
 //     未注入 executor → ExecuteInstance 返回 ErrExecutorNotWired；
 //     未注入 dlqInspector → ArchiveDeadTasks 返回 (0, nil)。
-//   - logger 为 nil 时使用 zap.NewNop()。
 func NewEvaluationDomainService(
 	caseRepo repositories.EvalCaseRepository,
 	taskRepo repositories.EvalTaskRepository,
@@ -57,11 +55,7 @@ func NewEvaluationDomainService(
 	appConfigLoader AppConfigLoader,
 	executor *InstanceExecutor,
 	dlqInspector DLQInspector,
-	logger *zap.Logger,
 ) EvaluationDomainService {
-	if logger == nil {
-		logger = zap.NewNop()
-	}
 	return &serviceImpl{
 		caseRepo:        caseRepo,
 		taskRepo:        taskRepo,
@@ -71,7 +65,6 @@ func NewEvaluationDomainService(
 		appConfigLoader: appConfigLoader,
 		executor:        executor,
 		dlqInspector:    dlqInspector,
-		logger:          logger,
 	}
 }
 
@@ -217,6 +210,7 @@ func (s *serviceImpl) CreateTask(ctx context.Context, name string, caseIDs, agen
 	for _, c := range cases {
 		for i, snap := range snapshots {
 			_ = i
+			deadlineAt := now.Add(180 * time.Second) // 固定3分钟超时
 			inst := &ev.RunInstance{
 				ID:                    uuid.NewString(),
 				TaskID:                task.ID,
@@ -227,6 +221,7 @@ func (s *serviceImpl) CreateTask(ctx context.Context, name string, caseIDs, agen
 				Attempt:               0,
 				ConversationID:        uuid.NewString(),
 				MessageID:             uuid.NewString(),
+				DeadlineAt:            &deadlineAt,
 			}
 			instances = append(instances, inst)
 		}
@@ -239,7 +234,7 @@ func (s *serviceImpl) CreateTask(ctx context.Context, name string, caseIDs, agen
 	for _, inst := range instances {
 		if err := s.instanceRepo.Create(ctx, inst); err != nil {
 			// 兜底：巡检层可基于 task 总数与实际 instance 数比对
-			s.logger.Warn("create run instance failed",
+			logger.Warn("create run instance failed",
 				zap.String("task_id", task.ID),
 				zap.String("instance_id", inst.ID),
 				zap.Error(err))
@@ -281,7 +276,7 @@ func (s *serviceImpl) RetryTaskFailedInstances(ctx context.Context, id string) (
 		// CAS 从原状态 → PENDING
 		ok, cerr := s.instanceRepo.CASStatus(ctx, inst.ID, inst.Status, ev.InstanceStatusPending)
 		if cerr != nil {
-			s.logger.Warn("CAS status failed on retry",
+			logger.Warn("CAS status failed on retry",
 				zap.String("instance_id", inst.ID), zap.Error(cerr))
 			continue
 		}
@@ -297,7 +292,7 @@ func (s *serviceImpl) RetryTaskFailedInstances(ctx context.Context, id string) (
 		inst.FinishedAt = nil
 		inst.HeartbeatAt = nil
 		if uerr := s.instanceRepo.Update(ctx, inst); uerr != nil {
-			s.logger.Warn("update instance after retry CAS failed",
+			logger.Warn("update instance after retry CAS failed",
 				zap.String("instance_id", inst.ID), zap.Error(uerr))
 			continue
 		}
@@ -336,7 +331,7 @@ func (s *serviceImpl) DeleteTask(ctx context.Context, id string) error {
 	for sid := range snapIDSet {
 		if derr := s.snapshotRepo.Delete(ctx, sid); derr != nil {
 			// 已经删完 task，这里只记日志，不阻塞返回（残留 snapshot 靠离线巡检清理）
-			s.logger.Warn("delete snapshot failed",
+			logger.Warn("delete snapshot failed",
 				zap.String("snapshot_id", sid), zap.Error(derr))
 		}
 	}
@@ -437,7 +432,7 @@ func (s *serviceImpl) SweepStaleInstances(ctx context.Context) (int, error) {
 	for _, inst := range insts {
 		ok, cerr := s.instanceRepo.CASStatus(ctx, inst.ID, inst.Status, ev.InstanceStatusTimeout)
 		if cerr != nil {
-			s.logger.Warn("cas timeout failed",
+			logger.Warn("cas timeout failed",
 				zap.String("instance_id", inst.ID), zap.Error(cerr))
 			continue
 		}
@@ -453,12 +448,12 @@ func (s *serviceImpl) SweepStaleInstances(ctx context.Context) (int, error) {
 			FinishedAt: time.Now(),
 		}
 		if uerr := s.resultRepo.Upsert(ctx, res); uerr != nil {
-			s.logger.Warn("upsert result failed on sweep",
+			logger.Warn("upsert result failed on sweep",
 				zap.String("instance_id", inst.ID), zap.Error(uerr))
 			// 继续 recount，让上层可感知
 		}
 		if rerr := s.taskRepo.RecountAndTransit(ctx, inst.TaskID); rerr != nil {
-			s.logger.Warn("recount task failed on sweep",
+			logger.Warn("recount task failed on sweep",
 				zap.String("task_id", inst.TaskID), zap.Error(rerr))
 		}
 		count++
@@ -481,7 +476,7 @@ func (s *serviceImpl) ReconcileTaskStatuses(ctx context.Context) (int, error) {
 	count := 0
 	for _, t := range tasks {
 		if rerr := s.taskRepo.RecountAndTransit(ctx, t.ID); rerr != nil {
-			s.logger.Warn("recount task failed",
+			logger.Warn("recount task failed",
 				zap.String("task_id", t.ID), zap.Error(rerr))
 			continue
 		}
@@ -494,7 +489,7 @@ func (s *serviceImpl) ReconcileTaskStatuses(ctx context.Context) (int, error) {
 // 若 dlqInspector 未注入则降级为 stub 返回 (0, nil)。
 func (s *serviceImpl) ArchiveDeadTasks(ctx context.Context) (int, error) {
 	if s.dlqInspector == nil {
-		s.logger.Warn("dlq inspector not wired, archive dead tasks skipped")
+		logger.Warn("dlq inspector not wired, archive dead tasks skipped")
 		return 0, nil
 	}
 	ids, err := s.dlqInspector.ListArchivedRunInstanceIDs(ctx)
@@ -505,7 +500,7 @@ func (s *serviceImpl) ArchiveDeadTasks(ctx context.Context) (int, error) {
 	for _, id := range ids {
 		inst, gerr := s.instanceRepo.GetByID(ctx, id)
 		if gerr != nil {
-			s.logger.Warn("get archived instance failed",
+			logger.Warn("get archived instance failed",
 				zap.String("instance_id", id), zap.Error(gerr))
 			continue
 		}
