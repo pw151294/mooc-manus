@@ -6,8 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"go.uber.org/zap"
-
 	ev "mooc-manus/internal/domains/models/evaluation"
 )
 
@@ -45,7 +43,6 @@ func newTestExecutor(t *testing.T, inst *ev.RunInstance, chat *stubChatRunner) (
 		chat, nil, nil,
 		skill, native,
 		"worker-1", 50*time.Millisecond, 2*time.Second,
-		zap.NewNop(),
 	)
 	return e, instRepo, taskRepo, resultRepo, skill, native
 }

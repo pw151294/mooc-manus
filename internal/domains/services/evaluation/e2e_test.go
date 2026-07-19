@@ -17,7 +17,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
 
 	appconfig "mooc-manus/internal/domains/models"
 	ev "mooc-manus/internal/domains/models/evaluation"
@@ -233,7 +232,7 @@ func TestE2E_2x2_TaskLifecycle(t *testing.T) {
 	chatRunner := &stubChatRunner{res: InternalChatResult{LastAssistantMsg: "done"}}
 	// aggregator 用 stubSpanRepo（返回空 span → Degraded=true，但不阻塞 Passed/Failed 判定）
 	spanRepo := &stubSpanRepo{}
-	aggregator := NewTraceAggregator(spanRepo, zap.NewNop())
+	aggregator := NewTraceAggregator(spanRepo)
 	skillExecutor := &stubSkillExecutor{}
 	native := newE2ENativeProvider(t.TempDir())
 
@@ -242,13 +241,12 @@ func TestE2E_2x2_TaskLifecycle(t *testing.T) {
 		verifyRunner, chatRunner, aggregator, nil,
 		skillExecutor, native,
 		"wk-e2e", 200*time.Millisecond, 30*time.Second,
-		zap.NewNop(),
 	)
 
 	// ==== 装配 domain service（executor 已就绪，可完整链路）====
 	domain := NewEvaluationDomainService(
 		caseRepo, taskRepo, instRepo, resultRepo, snapshotRepo,
-		loader, executor, nil, zap.NewNop(),
+		loader, executor, nil,
 	)
 
 	// ==== 阶段 1: CreateTask ====

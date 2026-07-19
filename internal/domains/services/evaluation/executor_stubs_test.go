@@ -59,6 +59,9 @@ func (r *stubInstRepo) UpdateTraceID(ctx context.Context, id, traceID string) er
 	r.updateTraceCalls = append(r.updateTraceCalls, traceID)
 	return nil
 }
+func (r *stubInstRepo) UpdateQueuedAt(ctx context.Context, id string, queuedAt *time.Time) error {
+	return nil
+}
 func (r *stubInstRepo) ListStaleInstances(ctx context.Context, before time.Time) ([]*ev.RunInstance, error) {
 	return nil, nil
 }

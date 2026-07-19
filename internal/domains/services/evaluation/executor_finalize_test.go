@@ -5,8 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"go.uber.org/zap"
-
 	"mooc-manus/internal/domains/models/tracing"
 )
 
@@ -63,7 +61,7 @@ func TestExecutor_FinalizeVerify_AggregatesMetricsAndBackfillsTraceID(t *testing
 			}),
 		},
 	}
-	agg := NewTraceAggregator(spanRepo, zap.NewNop())
+	agg := NewTraceAggregator(spanRepo)
 
 	e := NewInstanceExecutor(
 		instRepo, taskRepo, resultRepo, snapRepo,
@@ -71,7 +69,6 @@ func TestExecutor_FinalizeVerify_AggregatesMetricsAndBackfillsTraceID(t *testing
 		chat, agg, nil,
 		skill, native,
 		"worker-1", 50*time.Millisecond, 2*time.Second,
-		zap.NewNop(),
 	)
 
 	if err := e.Execute(context.Background(), "inst-1"); err != nil {
@@ -132,7 +129,7 @@ func TestExecutor_FinalizeVerify_DegradedNoRootAcceptable(t *testing.T) {
 			}),
 		},
 	}
-	agg := NewTraceAggregator(spanRepo, zap.NewNop())
+	agg := NewTraceAggregator(spanRepo)
 
 	e := NewInstanceExecutor(
 		instRepo, taskRepo, resultRepo, snapRepo,
@@ -140,7 +137,6 @@ func TestExecutor_FinalizeVerify_DegradedNoRootAcceptable(t *testing.T) {
 		chat, agg, nil,
 		skill, native,
 		"worker-1", 50*time.Millisecond, 2*time.Second,
-		zap.NewNop(),
 	)
 
 	if err := e.Execute(context.Background(), "inst-1"); err != nil {
@@ -184,7 +180,6 @@ func TestExecutor_FinalizeVerify_HeartbeatFires(t *testing.T) {
 		chat, nil, nil,
 		skill, native,
 		"worker-1", 30*time.Millisecond, 2*time.Second,
-		zap.NewNop(),
 	)
 
 	if err := e.Execute(context.Background(), "inst-1"); err != nil {

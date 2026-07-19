@@ -56,7 +56,7 @@ func TestAggregate_NoRoot_降级(t *testing.T) {
 			"llm.io.total_units":      float64(30),
 		}, "tr1"),
 	}}
-	agg := NewTraceAggregator(repo, nil)
+	agg := NewTraceAggregator(repo)
 	m, err := agg.Aggregate(context.Background(), "conv-1")
 	require.NoError(t, err)
 	assert.True(t, m.Degraded, "无 AGENT_ROOT 应降级")
@@ -73,7 +73,7 @@ func TestAggregate_MultipleRoot_取最大延迟(t *testing.T) {
 		makeSpan(tracing.SpanTypeAgentRoot, 500, nil, "tr2"),
 		makeSpan(tracing.SpanTypeAgentRoot, 1500, nil, "tr2"),
 	}}
-	agg := NewTraceAggregator(repo, nil)
+	agg := NewTraceAggregator(repo)
 	m, err := agg.Aggregate(context.Background(), "conv-2")
 	require.NoError(t, err)
 	assert.False(t, m.Degraded)
@@ -87,7 +87,7 @@ func TestAggregate_LLMCallMissingUsage_跳过(t *testing.T) {
 		makeSpan(tracing.SpanTypeAgentRoot, 800, nil, "tr3"),
 		makeSpan(tracing.SpanTypeLLMCall, 200, map[string]interface{}{}, "tr3"),
 	}}
-	agg := NewTraceAggregator(repo, nil)
+	agg := NewTraceAggregator(repo)
 	m, err := agg.Aggregate(context.Background(), "conv-3")
 	require.NoError(t, err)
 	assert.False(t, m.Degraded)
@@ -100,7 +100,7 @@ func TestAggregate_LLMCallMissingUsage_跳过(t *testing.T) {
 func TestAggregate_RepoError_透传(t *testing.T) {
 	wantErr := errors.New("boom")
 	repo := &stubSpanRepo{err: wantErr}
-	agg := NewTraceAggregator(repo, nil)
+	agg := NewTraceAggregator(repo)
 	m, err := agg.Aggregate(context.Background(), "conv-err")
 	assert.Nil(t, m)
 	assert.ErrorIs(t, err, wantErr)
@@ -121,7 +121,7 @@ func TestAggregate_TagAsInt64_兼容多类型(t *testing.T) {
 			"llm.io.total_units":      int(30),
 		}, "tr5"),
 	}}
-	agg := NewTraceAggregator(repo, nil)
+	agg := NewTraceAggregator(repo)
 	m, err := agg.Aggregate(context.Background(), "conv-5")
 	require.NoError(t, err)
 	assert.Equal(t, int64(11), m.PromptTokens)

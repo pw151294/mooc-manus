@@ -5,8 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"go.uber.org/zap"
-
 	ev "mooc-manus/internal/domains/models/evaluation"
 )
 
@@ -31,7 +29,6 @@ func TestExecutor_CAS_QueuedFailsFast(t *testing.T) {
 		nil,
 		skill, native,
 		"worker-1", 50*time.Millisecond, 2*time.Second,
-		zap.NewNop(),
 	)
 
 	err := e.Execute(context.Background(), "inst-1")
@@ -87,7 +84,6 @@ func TestExecutor_CAS_QueuedSucceeds(t *testing.T) {
 		chat, nil, nil,
 		skill, native,
 		"worker-1", 50*time.Millisecond, 2*time.Second,
-		zap.NewNop(),
 	)
 
 	if err := e.Execute(context.Background(), "inst-1"); err != nil {

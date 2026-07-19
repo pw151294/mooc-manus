@@ -5,8 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"go.uber.org/zap"
-
 	ev "mooc-manus/internal/domains/models/evaluation"
 )
 
@@ -38,7 +36,6 @@ func TestExecutor_InitScript_Success(t *testing.T) {
 		chat, nil, nil,
 		skill, native,
 		"worker-1", 50*time.Millisecond, 2*time.Second,
-		zap.NewNop(),
 	)
 
 	if err := e.Execute(context.Background(), "inst-1"); err != nil {
@@ -83,7 +80,6 @@ func TestExecutor_InitScript_NonZeroFailsInit(t *testing.T) {
 		chat, nil, nil,
 		skill, native,
 		"worker-1", 50*time.Millisecond, 2*time.Second,
-		zap.NewNop(),
 	)
 
 	if err := e.Execute(context.Background(), "inst-1"); err != nil {

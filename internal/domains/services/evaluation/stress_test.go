@@ -16,7 +16,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
 
 	appconfig "mooc-manus/internal/domains/models"
 	ev "mooc-manus/internal/domains/models/evaluation"
@@ -68,7 +67,7 @@ func TestStress_500Instances(t *testing.T) {
 	verifyRunner := NewVerifyRunner(10*time.Second, 4<<10)
 	chatRunner := &stubChatRunner{res: InternalChatResult{LastAssistantMsg: "done"}}
 	spanRepo := &stubSpanRepo{}
-	aggregator := NewTraceAggregator(spanRepo, zap.NewNop())
+	aggregator := NewTraceAggregator(spanRepo)
 	skillExecutor := &stubSkillExecutor{}
 	native := newE2ENativeProvider(t.TempDir())
 
@@ -77,12 +76,11 @@ func TestStress_500Instances(t *testing.T) {
 		verifyRunner, chatRunner, aggregator, nil,
 		skillExecutor, native,
 		"wk-stress", 200*time.Millisecond, 30*time.Second,
-		zap.NewNop(),
 	)
 
 	domain := NewEvaluationDomainService(
 		caseRepo, taskRepo, instRepo, resultRepo, snapshotRepo,
-		loader, executor, nil, zap.NewNop(),
+		loader, executor, nil,
 	)
 
 	// ==== 阶段 1: CreateTask ====

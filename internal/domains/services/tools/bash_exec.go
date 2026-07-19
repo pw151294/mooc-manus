@@ -317,4 +317,4 @@ func truncateCombinedOutput(stdout, stderr []byte, cap int) (string, bool) {
 }
 
 // SupportsRiskAssessment 覆写 BaseTool 默认实现；bashExec 是 HITL 首发接入的工具
-func (t *BashExecTool) SupportsRiskAssessment() bool { return true }
+func (t *BashExecTool) SupportsRiskAssessment() bool { return false }

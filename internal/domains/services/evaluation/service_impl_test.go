@@ -233,6 +233,9 @@ func (r *fakeInstRepo) Delete(ctx context.Context, id string) error {
 	return nil
 }
 func (r *fakeInstRepo) UpdateTraceID(ctx context.Context, id, traceID string) error { return nil }
+func (r *fakeInstRepo) UpdateQueuedAt(ctx context.Context, id string, queuedAt *time.Time) error {
+	return nil
+}
 func (r *fakeInstRepo) ListStaleInstances(ctx context.Context, before time.Time) ([]*ev.RunInstance, error) {
 	return r.stale, nil
 }
@@ -370,7 +373,7 @@ func newTestService(t *testing.T) (*serviceImpl, *fakeCaseRepo, *fakeTaskRepo, *
 	loader := &fakeAppConfigLoader{store: map[string]appconfig.AppConfigDO{}}
 	svc := NewEvaluationDomainService(
 		caseRepo, taskRepo, instRepo, resultRepo, snapRepo,
-		loader, nil, nil, nil,
+		loader, nil, nil,
 	).(*serviceImpl)
 	return svc, caseRepo, taskRepo, instRepo, resultRepo, snapRepo, loader
 }
@@ -699,7 +702,7 @@ func TestArchiveDeadTasks_WithInspector(t *testing.T) {
 	loader := &fakeAppConfigLoader{store: map[string]appconfig.AppConfigDO{}}
 	svc := NewEvaluationDomainService(
 		caseRepo, taskRepo, instRepo, resultRepo, snapRepo,
-		loader, nil, inspector, nil,
+		loader, nil, inspector,
 	).(*serviceImpl)
 
 	_ = instRepo.Create(context.Background(), &ev.RunInstance{ID: "i1", TaskID: "t1", Status: ev.InstanceStatusRunning})
