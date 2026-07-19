@@ -23,6 +23,7 @@ type EvalRunInstanceRepository interface {
 	Update(ctx context.Context, inst *evaluation.RunInstance) error
 	Delete(ctx context.Context, id string) error
 	UpdateTraceID(ctx context.Context, id, traceID string) error
+	UpdateQueuedAt(ctx context.Context, id string, queuedAt *time.Time) error
 	ListStaleInstances(ctx context.Context, before time.Time) ([]*evaluation.RunInstance, error)
 	UpdateHeartbeat(ctx context.Context, id, workerID string, now time.Time) error
 	CASStatus(ctx context.Context, id string, from, to evaluation.InstanceStatus) (bool, error)
@@ -105,6 +106,11 @@ func (r *evalRunInstanceRepositoryImpl) Delete(ctx context.Context, id string) e
 func (r *evalRunInstanceRepositoryImpl) UpdateTraceID(ctx context.Context, id, traceID string) error {
 	return r.db.WithContext(ctx).Model(&models.EvalRunInstancePO{}).
 		Where("id = ?", id).Update("trace_id", traceID).Error
+}
+
+func (r *evalRunInstanceRepositoryImpl) UpdateQueuedAt(ctx context.Context, id string, queuedAt *time.Time) error {
+	return r.db.WithContext(ctx).Model(&models.EvalRunInstancePO{}).
+		Where("id = ?", id).Update("queued_at", queuedAt).Error
 }
 
 func (r *evalRunInstanceRepositoryImpl) ListStaleInstances(ctx context.Context, before time.Time) ([]*evaluation.RunInstance, error) {
