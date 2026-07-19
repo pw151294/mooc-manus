@@ -23,6 +23,7 @@ type EvalRunInstanceRepository interface {
 	Update(ctx context.Context, inst *evaluation.RunInstance) error
 	Delete(ctx context.Context, id string) error
 	UpdateTraceID(ctx context.Context, id, traceID string) error
+	UpdateQueuedAt(ctx context.Context, id string, queuedAt *time.Time) error
 	ListStaleInstances(ctx context.Context, before time.Time) ([]*evaluation.RunInstance, error)
 	UpdateHeartbeat(ctx context.Context, id, workerID string, now time.Time) error
 	CASStatus(ctx context.Context, id string, from, to evaluation.InstanceStatus) (bool, error)
@@ -107,11 +108,16 @@ func (r *evalRunInstanceRepositoryImpl) UpdateTraceID(ctx context.Context, id, t
 		Where("id = ?", id).Update("trace_id", traceID).Error
 }
 
+func (r *evalRunInstanceRepositoryImpl) UpdateQueuedAt(ctx context.Context, id string, queuedAt *time.Time) error {
+	return r.db.WithContext(ctx).Model(&models.EvalRunInstancePO{}).
+		Where("id = ?", id).Update("queued_at", queuedAt).Error
+}
+
 func (r *evalRunInstanceRepositoryImpl) ListStaleInstances(ctx context.Context, before time.Time) ([]*evaluation.RunInstance, error) {
 	var pos []models.EvalRunInstancePO
 	err := r.db.WithContext(ctx).
 		Where("status NOT IN ?", []string{"PASSED", "FAILED", "TIMEOUT", "CANCELED"}).
-		Where("(heartbeat_at IS NULL OR heartbeat_at < ?) OR (deadline_at IS NOT NULL AND deadline_at < ?)", before, time.Now()).
+		Where("deadline_at IS NOT NULL AND deadline_at < ?", time.Now()).
 		Find(&pos).Error
 	if err != nil {
 		return nil, err
