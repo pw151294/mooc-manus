@@ -22,6 +22,7 @@ import (
 	"mooc-manus/internal/infra/repositories"
 	"mooc-manus/internal/infra/scheduler"
 	"mooc-manus/internal/infra/storage"
+	"mooc-manus/pkg/logger"
 
 	"github.com/gin-gonic/gin"
 	"github.com/hibiken/asynq"
@@ -97,13 +98,6 @@ func InitRouter() *gin.Engine {
 		asynqClient = mq.NewClient(config.Cfg.Asynq)
 	}
 
-	// 1.7 评测装配用的原始 zap logger（domain 层要求 *zap.Logger）
-	// 使用 zap.NewProduction 作为主 logger；若初始化失败则回落 NopLogger。
-	evalZap, err := zap.NewProduction()
-	if err != nil {
-		evalZap = zap.NewNop()
-	}
-
 	// ============================================================
 	// 第二层：Domain Service 层（按依赖拓扑顺序初始化）
 	// ============================================================
@@ -158,7 +152,7 @@ func InitRouter() *gin.Engine {
 		time.Duration(evalCfg.VerifyScriptTimeoutSec)*time.Second,
 		evalCfg.VerifyOutputCapBytes,
 	)
-	traceAggregator := evaluation.NewTraceAggregator(aiSpanRepo, evalZap)
+	traceAggregator := evaluation.NewTraceAggregator(aiSpanRepo)
 	internalChatRunner := evaluation.NewInternalChatRunner(baseAgentDomainSvc)
 
 	workerID := hostname() + "-" + strconv.Itoa(os.Getpid())
@@ -169,14 +163,13 @@ func InitRouter() *gin.Engine {
 		workerID,
 		time.Duration(evalCfg.HeartbeatIntervalSec)*time.Second,
 		time.Duration(evalCfg.InstanceTotalTimeoutSec)*time.Second,
-		evalZap,
 	)
 
 	// AppConfigDomainService.GetById 已经满足 evaluation.AppConfigLoader 接口，直接注入。
 	// dlqInspector 目前 nil（M9 后续补 asynq.Inspector 适配器），ArchiveDeadTasks 会降级返回 (0, nil)。
 	evalDomainSvc := evaluation.NewEvaluationDomainService(
 		evalCaseRepo, evalTaskRepo, evalInstRepo, evalResultRepo, evalSnapshotRepo,
-		appConfigDomainSvc, instanceExecutor, nil, evalZap,
+		appConfigDomainSvc, instanceExecutor, nil,
 	)
 
 	// ============================================================
@@ -211,7 +204,7 @@ func InitRouter() *gin.Engine {
 	}
 	evalAppSvc := app_svc.NewEvaluationApplicationService(
 		evalDomainSvc, evalCaseRepo, evalTaskRepo, evalInstRepo, evalResultRepo,
-		appConfigDomainSvc, evalMQ, evalCfg, evalZap,
+		appConfigDomainSvc, evalMQ, evalCfg,
 	)
 
 	// ============================================================
@@ -253,10 +246,10 @@ func InitRouter() *gin.Engine {
 		runInstanceHandler := mq.NewRunInstanceHandler(instanceExecutor, evalInstRepo, gate)
 		srv, serr := mq.StartServer(config.Cfg.Asynq, evalCfg, runInstanceHandler)
 		if serr != nil {
-			evalZap.Error("asynq server 启动失败", zap.Error(serr))
+			logger.Zap().Named("eval").Error("asynq server 启动失败", zap.Error(serr))
 		} else {
 			asynqSrv = srv
-			evalZap.Info("asynq server started",
+			logger.Zap().Named("eval").Info("asynq server started",
 				zap.String("redis_addr", config.Cfg.Asynq.RedisAddr))
 		}
 	}
@@ -264,27 +257,27 @@ func InitRouter() *gin.Engine {
 
 	// Cron 巡检（M7）：sweeper / reconciler / dlq_archiver
 	if config.Cfg != nil && config.Cfg.Evaluation.Enabled {
-		sched := scheduler.New(evalZap)
+		sched := scheduler.New()
 		if evalCfg.CronSweeperIntervalSec > 0 {
 			_ = sched.AddFunc(
 				fmt.Sprintf("*/%d * * * * *", evalCfg.CronSweeperIntervalSec),
-				scheduler.NewSweeperJob(evalDomainSvc, evalZap).Run,
+				scheduler.NewSweeperJob(evalDomainSvc).Run,
 			)
 		}
 		if evalCfg.CronReconcilerIntervalSec > 0 {
 			_ = sched.AddFunc(
 				fmt.Sprintf("*/%d * * * * *", evalCfg.CronReconcilerIntervalSec),
-				scheduler.NewReconcilerJob(evalDomainSvc, evalZap).Run,
+				scheduler.NewReconcilerJob(evalDomainSvc).Run,
 			)
 		}
 		if evalCfg.CronDLQArchiveIntervalSec > 0 {
 			_ = sched.AddFunc(
 				fmt.Sprintf("*/%d * * * * *", evalCfg.CronDLQArchiveIntervalSec),
-				scheduler.NewDLQArchiverJob(evalDomainSvc, evalZap).Run,
+				scheduler.NewDLQArchiverJob(evalDomainSvc).Run,
 			)
 		}
 		sched.Start()
-		evalZap.Info("eval cron scheduler started")
+		logger.Zap().Named("eval").Info("eval cron scheduler started")
 	}
 
 	// ============================================================
