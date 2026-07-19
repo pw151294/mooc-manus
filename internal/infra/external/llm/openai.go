@@ -27,7 +27,7 @@ func NewOpenAiLLM(config models.ModelConfig) *OpenAiLLM {
 	llm.modelName = config.ModelName
 	llm.temperature = config.Temperature
 	llm.maxTokens = config.MaxTokens
-	llm.timeout = 60
+	llm.timeout = 300
 	llm.client = openai.NewClient(
 		option.WithBaseURL(config.BaseUrl),
 		option.WithAPIKey(config.ApiKey),

@@ -6,6 +6,7 @@ import (
 	"go.uber.org/zap"
 
 	"mooc-manus/internal/domains/models/tracing"
+	"mooc-manus/pkg/logger"
 )
 
 // Metrics 是评测系统按 conversation 聚合出的关键指标，
@@ -32,12 +33,11 @@ const (
 // TraceAggregator 从 ai_span 表按 conversationID 聚合评测指标。
 type TraceAggregator struct {
 	spanRepo tracing.SpanRepository
-	logger   *zap.Logger
 }
 
-// NewTraceAggregator 构造 aggregator。logger 允许为 nil（单测便利）。
-func NewTraceAggregator(spanRepo tracing.SpanRepository, logger *zap.Logger) *TraceAggregator {
-	return &TraceAggregator{spanRepo: spanRepo, logger: logger}
+// NewTraceAggregator 构造 aggregator。
+func NewTraceAggregator(spanRepo tracing.SpanRepository) *TraceAggregator {
+	return &TraceAggregator{spanRepo: spanRepo}
 }
 
 // Aggregate 按 conversationID 聚合 AgentLatencyMs / token 三项指标：
@@ -76,14 +76,12 @@ func (a *TraceAggregator) Aggregate(ctx context.Context, conversationID string) 
 
 	if rootCount == 0 {
 		m.Degraded = true
-		if a.logger != nil {
-			a.logger.Warn("聚合时未找到 AGENT_ROOT span，指标降级",
-				zap.String("conversation_id", conversationID),
-				zap.Int("span_count", len(spans)))
-		}
+		logger.Warn("聚合时未找到 AGENT_ROOT span，指标降级",
+			zap.String("conversation_id", conversationID),
+			zap.Int("span_count", len(spans)))
 	}
-	if rootCount > 1 && a.logger != nil {
-		a.logger.Warn("同一 conversation 出现多个 AGENT_ROOT，取最大 LatencyMs",
+	if rootCount > 1 {
+		logger.Warn("同一 conversation 出现多个 AGENT_ROOT，取最大 LatencyMs",
 			zap.String("conversation_id", conversationID),
 			zap.Int("root_count", rootCount))
 	}

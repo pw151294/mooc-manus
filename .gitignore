@@ -32,5 +32,8 @@ data/
 # Runtime logs
 logs/
 
+# Runtime scratch (E2E summaries, verify outputs, etc.)
+tmp/
+
 # Local skill tool state
 .superpowers/

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"go.uber.org/zap"
@@ -12,7 +13,13 @@ import (
 	"mooc-manus/internal/domains/models/tracing"
 	"mooc-manus/internal/domains/services/tools"
 	"mooc-manus/internal/infra/repositories"
+	"mooc-manus/pkg/logger"
 )
+
+// evalWorkspacePlaceholder task_prompt 内可用的占位符，chat 前会被替换为当前实例的
+// message workspace 绝对路径。用途：让评测用例的 prompt 能直接告诉 agent workspace 位置，
+// 从而覆盖需要绝对路径的 fileRead 能力（fileEdit / fileWrite 相对 workspace，不受影响）。
+const evalWorkspacePlaceholder = "${EVAL_WORKSPACE}"
 
 // InstanceExecutor 单个评测实例执行器
 // 状态推进链路：QUEUED → INITIALIZING → RUNNING → VERIFYING → PASSED / FAILED / TIMEOUT
@@ -32,7 +39,6 @@ type InstanceExecutor struct {
 	workerID          string
 	heartbeatInterval time.Duration
 	chatTimeout       time.Duration
-	logger            *zap.Logger
 }
 
 // NewInstanceExecutor 构造 InstanceExecutor
@@ -51,11 +57,7 @@ func NewInstanceExecutor(
 	workerID string,
 	heartbeatInterval time.Duration,
 	chatTimeout time.Duration,
-	logger *zap.Logger,
 ) *InstanceExecutor {
-	if logger == nil {
-		logger = zap.NewNop()
-	}
 	if heartbeatInterval <= 0 {
 		heartbeatInterval = 5 * time.Second
 	}
@@ -76,7 +78,6 @@ func NewInstanceExecutor(
 		workerID:          workerID,
 		heartbeatInterval: heartbeatInterval,
 		chatTimeout:       chatTimeout,
-		logger:            logger,
 	}
 }
 
@@ -84,21 +85,41 @@ func NewInstanceExecutor(
 // 幂等策略：QUEUED→INITIALIZING 用 CAS，一旦 CAS 失败（已被其他 worker 拿走 / 状态非法）直接返回 nil，
 // 避免同一 instance 被并发消费。
 func (e *InstanceExecutor) Execute(ctx context.Context, instanceID string) error {
+	startedAt := time.Now()
 	// Step 1: CAS QUEUED → INITIALIZING（Task 4.5.1）
 	ok, err := e.instRepo.CASStatus(ctx, instanceID, ev.InstanceStatusQueued, ev.InstanceStatusInitializing)
 	if err != nil {
+		logger.Error("EVAL_STAGE_INIT_CAS_ERR",
+			zap.String("instance_id", instanceID),
+			zap.String("worker_id", e.workerID),
+			zap.Error(err))
 		return err
 	}
 	if !ok {
-		e.logger.Warn("CAS QUEUED→INITIALIZING 失败，实例可能已被消费或状态非法",
-			zap.String("instance_id", instanceID))
+		logger.Warn("EVAL_STAGE_INIT_CAS_MISS",
+			zap.String("instance_id", instanceID),
+			zap.String("worker_id", e.workerID),
+			zap.String("hint", "已被其他 worker 拿走 / 状态非法 / 巡检抢占"))
 		return nil
 	}
 
 	inst, err := e.instRepo.GetByID(ctx, instanceID)
 	if err != nil {
+		logger.Error("EVAL_STAGE_INIT_LOAD_ERR",
+			zap.String("instance_id", instanceID),
+			zap.Error(err))
 		return err
 	}
+	logger.Info("EVAL_STAGE_INIT",
+		zap.String("instance_id", inst.ID),
+		zap.String("task_id", inst.TaskID),
+		zap.String("case_id", inst.CaseID),
+		zap.String("conversation_id", inst.ConversationID),
+		zap.String("message_id", inst.MessageID),
+		zap.Int("attempt", inst.Attempt),
+		zap.String("worker_id", e.workerID),
+		zap.Bool("has_init_script", inst.CaseSnapshot.InitScript != ""),
+		zap.Int64("started_epoch_ms", startedAt.UnixMilli()))
 
 	// Step 2-4: init / chat / verify / finalize（Task 4.5.2-4.5.4）
 	return e.executeStages(ctx, inst)
@@ -121,11 +142,21 @@ func (e *InstanceExecutor) executeStages(ctx context.Context, inst *ev.RunInstan
 
 	// init_script：可选。执行失败直接终结 INSTANCE 为 FAILED。
 	if inst.CaseSnapshot.InitScript != "" {
+		initStart := time.Now()
 		r, rerr := e.verifyRunner.Run(stageCtx, workdir, inst.CaseSnapshot.InitScript)
 		stderr := ""
+		exitCode := -1
 		if r != nil {
 			stderr = r.Stderr
+			exitCode = r.ExitCode
 		}
+		logger.Info("EVAL_STAGE_INIT_SCRIPT_DONE",
+			zap.String("instance_id", inst.ID),
+			zap.String("case_id", inst.CaseID),
+			zap.String("workdir", workdir),
+			zap.Int("exit_code", exitCode),
+			zap.Int64("duration_ms", time.Since(initStart).Milliseconds()),
+			zap.NamedError("run_err", rerr))
 		if rerr != nil {
 			e.finalizeError(ctx, inst, ev.InstanceStatusInitializing, ev.InstanceStatusFailed,
 				"init_script run: "+rerr.Error()+"; stderr="+stderr)
@@ -141,6 +172,10 @@ func (e *InstanceExecutor) executeStages(ctx context.Context, inst *ev.RunInstan
 	// 加载 agent snapshot（chat 需要）—— 在 INITIALIZING 阶段做，失败也算 init 失败
 	snap, err := e.snapshotRepo.Get(stageCtx, inst.AgentConfigSnapshotID)
 	if err != nil {
+		logger.Error("EVAL_STAGE_SNAPSHOT_LOAD_ERR",
+			zap.String("instance_id", inst.ID),
+			zap.String("snapshot_id", inst.AgentConfigSnapshotID),
+			zap.Error(err))
 		e.finalizeError(ctx, inst, ev.InstanceStatusInitializing, ev.InstanceStatusFailed,
 			"load snapshot: "+err.Error())
 		return nil
@@ -149,48 +184,100 @@ func (e *InstanceExecutor) executeStages(ctx context.Context, inst *ev.RunInstan
 	// INITIALIZING → RUNNING
 	ok, _ := e.instRepo.CASStatus(ctx, inst.ID, ev.InstanceStatusInitializing, ev.InstanceStatusRunning)
 	if !ok {
-		e.logger.Warn("INITIALIZING→RUNNING CAS 失败，可能已被 timeout 巡检抢占",
-			zap.String("instance_id", inst.ID))
+		logger.Warn("EVAL_STAGE_RUN_CAS_MISS",
+			zap.String("instance_id", inst.ID),
+			zap.String("hint", "已被 timeout 巡检抢占或状态被外部改动"))
 		// 安全退出：清理 workspace + 触发 task recount 让上层感知
 		e.cleanupAndRecount(ctx, inst)
 		return nil
 	}
+	// task_prompt 占位符替换：把 ${EVAL_WORKSPACE} 展开为实际 workspace 绝对路径，
+	// 让 agent 能拿到绝对路径喂给 fileRead（相对路径工具 fileEdit / fileWrite 不受影响）。
+	query := strings.ReplaceAll(inst.CaseSnapshot.TaskPrompt, evalWorkspacePlaceholder, workdir)
+	chatStart := time.Now()
+	logger.Info("EVAL_STAGE_RUN_ENTER",
+		zap.String("instance_id", inst.ID),
+		zap.String("task_id", inst.TaskID),
+		zap.String("case_id", inst.CaseID),
+		zap.String("conversation_id", inst.ConversationID),
+		zap.String("message_id", inst.MessageID),
+		zap.String("snapshot_id", snap.ID),
+		zap.String("model", snap.Model.ModelName),
+		zap.String("workdir", workdir),
+		zap.Int("prompt_len", len(query)),
+		zap.Bool("workspace_placeholder_used", strings.Contains(inst.CaseSnapshot.TaskPrompt, evalWorkspacePlaceholder)))
 
 	// chat 阶段（Task 4.5.3）
 	chatRes, cerr := e.chatRunner.Run(stageCtx, InternalChatReq{
 		Snapshot:       snap,
 		ConversationID: inst.ConversationID,
 		MessageID:      inst.MessageID,
-		Query:          inst.CaseSnapshot.TaskPrompt,
+		Query:          query,
 		TotalTimeout:   e.chatTimeout,
 	})
+	chatDur := time.Since(chatStart).Milliseconds()
 	if cerr != nil {
+		logger.Error("EVAL_STAGE_RUN_ERR",
+			zap.String("instance_id", inst.ID),
+			zap.Int64("duration_ms", chatDur),
+			zap.Error(cerr))
 		e.finalizeError(ctx, inst, ev.InstanceStatusRunning, ev.InstanceStatusFailed,
 			"chat runner: "+cerr.Error())
 		return nil
 	}
 	if chatRes.DidTimeout {
+		logger.Warn("EVAL_STAGE_RUN_TIMEOUT",
+			zap.String("instance_id", inst.ID),
+			zap.Int64("duration_ms", chatDur),
+			zap.Duration("chat_timeout", e.chatTimeout))
 		e.finalizeError(ctx, inst, ev.InstanceStatusRunning, ev.InstanceStatusTimeout,
 			"agent_chat_timeout")
 		return nil
 	}
 	if chatRes.Error != nil {
+		logger.Warn("EVAL_STAGE_RUN_AGENT_ERR",
+			zap.String("instance_id", inst.ID),
+			zap.Int64("duration_ms", chatDur),
+			zap.Error(chatRes.Error))
 		e.finalizeError(ctx, inst, ev.InstanceStatusRunning, ev.InstanceStatusFailed,
 			"agent_error: "+chatRes.Error.Error())
 		return nil
 	}
+	logger.Info("EVAL_STAGE_RUN_DONE",
+		zap.String("instance_id", inst.ID),
+		zap.Int64("duration_ms", chatDur),
+		zap.Int("last_msg_len", len(chatRes.LastAssistantMsg)))
 
 	// RUNNING → VERIFYING
 	ok, _ = e.instRepo.CASStatus(ctx, inst.ID, ev.InstanceStatusRunning, ev.InstanceStatusVerifying)
 	if !ok {
-		e.logger.Warn("RUNNING→VERIFYING CAS 失败", zap.String("instance_id", inst.ID))
+		logger.Warn("EVAL_STAGE_VERIFY_CAS_MISS",
+			zap.String("instance_id", inst.ID),
+			zap.String("hint", "RUNNING→VERIFYING 抢占失败"))
 		e.cleanupAndRecount(ctx, inst)
 		return nil
 	}
 
 	// verify_script（Task 4.5.4）
+	verifyStart := time.Now()
 	vres, verr := e.verifyRunner.Run(stageCtx, workdir, inst.CaseSnapshot.VerifyScript)
 	passed := verr == nil && vres != nil && vres.ExitCode == 0
+	exitCode := -1
+	stdoutBytes, stderrBytes := 0, 0
+	if vres != nil {
+		exitCode = vres.ExitCode
+		stdoutBytes = len(vres.Stdout)
+		stderrBytes = len(vres.Stderr)
+	}
+	logger.Info("EVAL_STAGE_VERIFY_DONE",
+		zap.String("instance_id", inst.ID),
+		zap.String("case_id", inst.CaseID),
+		zap.Bool("passed", passed),
+		zap.Int("exit_code", exitCode),
+		zap.Int("stdout_bytes", stdoutBytes),
+		zap.Int("stderr_bytes", stderrBytes),
+		zap.Int64("duration_ms", time.Since(verifyStart).Milliseconds()),
+		zap.NamedError("run_err", verr))
 	e.finalizeVerify(ctx, inst, passed, vres, verr)
 	return nil
 }
@@ -229,19 +316,34 @@ func (e *InstanceExecutor) finalizeError(ctx context.Context, inst *ev.RunInstan
 	from, to ev.InstanceStatus, errMsg string) {
 	ok, _ := e.instRepo.CASStatus(ctx, inst.ID, from, to)
 	if !ok {
-		e.logger.Warn("finalizeError CAS 失败",
-			zap.String("id", inst.ID),
+		logger.Warn("EVAL_STAGE_FINALIZE_ERROR_CAS_MISS",
+			zap.String("instance_id", inst.ID),
 			zap.String("from", string(from)),
 			zap.String("to", string(to)))
 	}
 	now := time.Now()
-	_ = e.resultRepo.Upsert(ctx, &ev.Result{
+	if err := e.resultRepo.Upsert(ctx, &ev.Result{
 		InstanceID: inst.ID,
 		Passed:     false,
 		ErrorLog:   truncate(errMsg, 64<<10),
 		FinishedAt: now,
-	})
-	_ = e.taskRepo.RecountAndTransit(ctx, inst.TaskID)
+	}); err != nil {
+		logger.Error("EVAL_STAGE_FINALIZE_ERROR_RESULT_UPSERT_ERR",
+			zap.String("instance_id", inst.ID),
+			zap.Error(err))
+	}
+	if err := e.taskRepo.RecountAndTransit(ctx, inst.TaskID); err != nil {
+		logger.Warn("EVAL_STAGE_FINALIZE_ERROR_RECOUNT_ERR",
+			zap.String("task_id", inst.TaskID),
+			zap.Error(err))
+	}
+	logger.Warn("EVAL_STAGE_FINALIZE_ERROR",
+		zap.String("instance_id", inst.ID),
+		zap.String("task_id", inst.TaskID),
+		zap.String("case_id", inst.CaseID),
+		zap.String("from", string(from)),
+		zap.String("to", string(to)),
+		zap.String("error_msg", errMsg))
 	e.cleanup(inst)
 }
 
@@ -260,6 +362,17 @@ func (e *InstanceExecutor) finalizeVerify(ctx context.Context, inst *ev.RunInsta
 			m, _ = e.aggregator.Aggregate(ctx, inst.ConversationID)
 		}
 		metrics = m
+		if metrics != nil {
+			logger.Info("EVAL_STAGE_AGGREGATE",
+				zap.String("instance_id", inst.ID),
+				zap.String("conversation_id", inst.ConversationID),
+				zap.String("trace_id", metrics.TraceID),
+				zap.Bool("degraded", metrics.Degraded),
+				zap.Int64("prompt_tokens", metrics.PromptTokens),
+				zap.Int64("completion_tokens", metrics.CompletionTokens),
+				zap.Int64("total_tokens", metrics.TotalTokens),
+				zap.Int64("agent_latency_ms", metrics.AgentLatencyMs))
+		}
 	}
 
 	target := ev.InstanceStatusPassed
@@ -276,7 +389,13 @@ func (e *InstanceExecutor) finalizeVerify(ctx context.Context, inst *ev.RunInsta
 	}
 
 	// VERIFYING → target；CAS 失败仅告警，Result 仍要落库以便排查
-	_, _ = e.instRepo.CASStatus(ctx, inst.ID, ev.InstanceStatusVerifying, target)
+	casOK, _ := e.instRepo.CASStatus(ctx, inst.ID, ev.InstanceStatusVerifying, target)
+	if !casOK {
+		logger.Warn("EVAL_STAGE_FINALIZE_CAS_MISS",
+			zap.String("instance_id", inst.ID),
+			zap.String("target", string(target)),
+			zap.String("hint", "VERIFYING→terminal CAS 抢占失败，Result 仍会落库"))
+	}
 
 	result := &ev.Result{
 		InstanceID: inst.ID,
@@ -298,8 +417,26 @@ func (e *InstanceExecutor) finalizeVerify(ctx context.Context, inst *ev.RunInsta
 			_ = e.instRepo.UpdateTraceID(ctx, inst.ID, metrics.TraceID)
 		}
 	}
-	_ = e.resultRepo.Upsert(ctx, result)
-	_ = e.taskRepo.RecountAndTransit(ctx, inst.TaskID)
+	if err := e.resultRepo.Upsert(ctx, result); err != nil {
+		logger.Error("EVAL_STAGE_FINALIZE_RESULT_UPSERT_ERR",
+			zap.String("instance_id", inst.ID),
+			zap.Error(err))
+	}
+	if err := e.taskRepo.RecountAndTransit(ctx, inst.TaskID); err != nil {
+		logger.Warn("EVAL_STAGE_FINALIZE_RECOUNT_ERR",
+			zap.String("task_id", inst.TaskID),
+			zap.Error(err))
+	}
+	logger.Info("EVAL_STAGE_FINALIZE",
+		zap.String("instance_id", inst.ID),
+		zap.String("task_id", inst.TaskID),
+		zap.String("case_id", inst.CaseID),
+		zap.String("final_status", string(target)),
+		zap.Bool("passed", result.Passed),
+		zap.Int("verify_exit_code", result.VerifyExitCode),
+		zap.Int64("total_tokens", result.TotalTokens),
+		zap.Int64("agent_latency_ms", result.AgentLatencyMs),
+		zap.Int("error_log_bytes", len(result.ErrorLog)))
 	e.cleanup(inst)
 }
 
@@ -307,13 +444,13 @@ func (e *InstanceExecutor) finalizeVerify(ctx context.Context, inst *ev.RunInsta
 func (e *InstanceExecutor) cleanup(inst *ev.RunInstance) {
 	if e.skillExecutor != nil {
 		if err := e.skillExecutor.CleanupMessage(inst.MessageID); err != nil {
-			e.logger.Warn("skillExecutor cleanup 失败",
+			logger.Warn("skillExecutor cleanup 失败",
 				zap.String("message_id", inst.MessageID), zap.Error(err))
 		}
 	}
 	if e.nativeProvider != nil {
 		if err := e.nativeProvider.Cleanup(inst.MessageID); err != nil {
-			e.logger.Warn("nativeProvider cleanup 失败",
+			logger.Warn("nativeProvider cleanup 失败",
 				zap.String("message_id", inst.MessageID), zap.Error(err))
 		}
 	}

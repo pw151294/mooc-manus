@@ -143,6 +143,16 @@ func GetGlobalLogger() Logger {
 	return globalLogger
 }
 
+// Zap 返回底层原生 *zap.Logger，供需要注入 *zap.Logger 依赖（如 evaluation domain）
+// 的模块复用同一 lumberjack sink，日志统一落到 logs/manus.log。
+// 全局 logger 未初始化或类型断言失败时回退 Nop，避免 nil 崩溃。
+func Zap() *zap.Logger {
+	if zl, ok := GetGlobalLogger().(*ZapLogger); ok && zl != nil {
+		return zl.zap
+	}
+	return zap.NewNop()
+}
+
 // Debug 实现Logger接口
 func (l *ZapLogger) Debug(msg string, fields ...zap.Field) {
 	l.zap.Debug(msg, fields...)
