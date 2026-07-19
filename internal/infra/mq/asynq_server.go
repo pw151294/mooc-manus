@@ -34,8 +34,7 @@ func StartServer(cfg config.AsynqConfig, evalCfg config.EvaluationConfig, handle
 		asynq.Config{
 			Concurrency: total,
 			Queues: map[string]int{
-				QueueDefault: 5,
-				QueueHigh:    10,
+				QueueDefault: 1,
 			},
 			RetryDelayFunc: func(n int, e error, t *asynq.Task) time.Duration {
 				// 与 spec §5.4 保持一致：统一 30s 短 backoff，

@@ -7,6 +7,7 @@ import (
 	"io"
 	"mime/multipart"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"go.uber.org/zap"
@@ -28,7 +29,7 @@ var ErrUploadNotUTF8 = errors.New("上传文件必须为 UTF-8 文本")
 // MQEnqueuer 抽象 asynq 客户端，便于 application 层测试。
 // 生产实现由 mq.Client 提供；单元测试可注入 fake。
 type MQEnqueuer interface {
-	EnqueueRunInstance(ctx context.Context, instanceID string, attempt int, useHigh bool) error
+	EnqueueRunInstance(ctx context.Context, instanceID string, attempt int) error
 }
 
 // EvaluationApplicationService 评测应用层入口。
@@ -212,8 +213,16 @@ func (s *evalAppImpl) DeleteCase(ctx context.Context, id string) error {
 // CreateTask 编排：domain 落 task + instances → application 拉出所有 instance → 并行 Enqueue。
 // Enqueue 单点失败不阻塞返回；巡检 cron 会兜底把长时间处于 PENDING 且 queued_at IS NULL 的实例重新推进。
 func (s *evalAppImpl) CreateTask(ctx context.Context, req *dtos.TaskCreateRequest) (*dtos.TaskView, error) {
+	s.logger.Info("EVAL_TASK_CREATE_START",
+		zap.String("name", req.Name),
+		zap.Int("m_cases", len(req.CaseIDs)),
+		zap.Int("n_agents", len(req.AgentConfigIDs)),
+		zap.Int("total_expect", len(req.CaseIDs)*len(req.AgentConfigIDs)))
 	task, err := s.domain.CreateTask(ctx, req.Name, req.CaseIDs, req.AgentConfigIDs)
 	if err != nil {
+		s.logger.Error("EVAL_TASK_CREATE_ERR",
+			zap.String("name", req.Name),
+			zap.Error(err))
 		return nil, err
 	}
 	// 拉出该 task 下所有实例（M×N，通常 <= 数百，走大 size 一次拉完）
@@ -223,7 +232,11 @@ func (s *evalAppImpl) CreateTask(ctx context.Context, req *dtos.TaskCreateReques
 			zap.String("task_id", task.ID), zap.Error(err))
 		return taskDOToView(task), nil
 	}
-	s.enqueueInstances(ctx, insts, false)
+	s.logger.Info("EVAL_TASK_CREATE_DONE",
+		zap.String("task_id", task.ID),
+		zap.Int("instance_count", len(insts)),
+		zap.Int("total_count", task.TotalCount))
+	s.enqueueInstances(ctx, insts)
 	return taskDOToView(task), nil
 }
 
@@ -282,7 +295,7 @@ func (s *evalAppImpl) RetryTask(ctx context.Context, id string) (*dtos.RetryTask
 					retried = append(retried, inst)
 				}
 			}
-			s.enqueueInstances(ctx, retried, true)
+			s.enqueueInstances(ctx, retried)
 		}
 	}
 	return &dtos.RetryTaskResp{RetriedCount: count}, nil
@@ -345,13 +358,13 @@ func (s *evalAppImpl) GetInstanceTraceID(ctx context.Context, id string) (string
 	return inst.TraceID, nil
 }
 
-// RetryInstance 单实例重试：domain 做 CAS，application 拿到 nil error 后 enqueue 高优队列。
+// RetryInstance 单实例重试：domain 做 CAS，application 拿到 nil error 后 enqueue。
 func (s *evalAppImpl) RetryInstance(ctx context.Context, id string) error {
 	if err := s.domain.RetryInstance(ctx, id); err != nil {
 		return err
 	}
 	if s.mq != nil {
-		if err := s.mq.EnqueueRunInstance(ctx, id, 0, true); err != nil {
+		if err := s.mq.EnqueueRunInstance(ctx, id, 0); err != nil {
 			s.logger.Warn("enqueue instance after retry failed",
 				zap.String("id", id), zap.Error(err))
 		}
@@ -387,26 +400,74 @@ func (s *evalAppImpl) ListAgentConfigs(ctx context.Context) ([]dtos.AgentConfigV
 
 // enqueueInstances 并行投递实例任务。
 // 单点失败仅日志；用 semaphore 控制并发（默认 8）。
-func (s *evalAppImpl) enqueueInstances(ctx context.Context, insts []*ev.RunInstance, useHigh bool) {
+func (s *evalAppImpl) enqueueInstances(ctx context.Context, insts []*ev.RunInstance) {
 	if s.mq == nil || len(insts) == 0 {
+		if s.mq == nil {
+			s.logger.Warn("EVAL_MQ_NOT_WIRED_SKIP_ENQUEUE",
+				zap.Int("skipped_count", len(insts)),
+				zap.String("hint", "Evaluation.Enabled=false 或 asynq 未装配，实例只能靠 cron 兜底"))
+		}
 		return
 	}
+	queue := "default"
+	s.logger.Info("EVAL_MQ_ENQUEUE_START",
+		zap.String("queue", queue),
+		zap.Int("count", len(insts)))
 	const parallelism = 8
 	sem := make(chan struct{}, parallelism)
 	var wg sync.WaitGroup
+	var okCount, failCount int32
+	var mu sync.Mutex
 	for _, inst := range insts {
 		wg.Add(1)
 		sem <- struct{}{}
 		go func(instID string, attempt int) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			if err := s.mq.EnqueueRunInstance(ctx, instID, attempt, useHigh); err != nil {
-				s.logger.Warn("enqueue run instance failed",
-					zap.String("id", instID), zap.Error(err))
+
+			// 先尝试 CAS PENDING → QUEUED，确保 executor 的 CAS 前置条件满足
+			ok, casErr := s.instRepo.CASStatus(ctx, instID, ev.InstanceStatusPending, ev.InstanceStatusQueued)
+			if casErr != nil {
+				s.logger.Warn("EVAL_MQ_CAS_TO_QUEUED_ERR",
+					zap.String("instance_id", instID),
+					zap.Error(casErr))
+				// CAS 失败也继续入队（巡检会兜底）
+			} else if !ok {
+				s.logger.Warn("EVAL_MQ_CAS_TO_QUEUED_MISS",
+					zap.String("instance_id", instID),
+					zap.String("hint", "状态可能已被推进，继续入队"))
+				// CAS 未命中也继续入队
+			} else {
+				// CAS 成功，更新 queued_at 时间戳
+				now := time.Now()
+				if err := s.instRepo.UpdateQueuedAt(ctx, instID, &now); err != nil {
+					s.logger.Warn("EVAL_MQ_UPDATE_QUEUED_AT_ERR",
+						zap.String("instance_id", instID),
+						zap.Error(err))
+				}
 			}
+
+			// 再入队到 MQ
+			if err := s.mq.EnqueueRunInstance(ctx, instID, attempt); err != nil {
+				s.logger.Warn("EVAL_MQ_ENQUEUE_ITEM_ERR",
+					zap.String("instance_id", instID),
+					zap.String("queue", queue),
+					zap.Error(err))
+				mu.Lock()
+				failCount++
+				mu.Unlock()
+				return
+			}
+			mu.Lock()
+			okCount++
+			mu.Unlock()
 		}(inst.ID, inst.Attempt)
 	}
 	wg.Wait()
+	s.logger.Info("EVAL_MQ_ENQUEUE_DONE",
+		zap.String("queue", queue),
+		zap.Int32("ok", okCount),
+		zap.Int32("fail", failCount))
 }
 
 // normalizePage 兜底默认值，避免 form 未传时 Offset 变负数。

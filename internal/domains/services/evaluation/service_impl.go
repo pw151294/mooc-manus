@@ -217,6 +217,7 @@ func (s *serviceImpl) CreateTask(ctx context.Context, name string, caseIDs, agen
 	for _, c := range cases {
 		for i, snap := range snapshots {
 			_ = i
+			deadlineAt := now.Add(180 * time.Second) // 固定3分钟超时
 			inst := &ev.RunInstance{
 				ID:                    uuid.NewString(),
 				TaskID:                task.ID,
@@ -227,6 +228,7 @@ func (s *serviceImpl) CreateTask(ctx context.Context, name string, caseIDs, agen
 				Attempt:               0,
 				ConversationID:        uuid.NewString(),
 				MessageID:             uuid.NewString(),
+				DeadlineAt:            &deadlineAt,
 			}
 			instances = append(instances, inst)
 		}

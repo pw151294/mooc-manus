@@ -34,9 +34,6 @@ func (c *Client) Close() error { return c.inner.Close() }
 
 // EnqueueRunInstance 投递单个评测实例任务。
 //
-// 参数：
-//   - useHigh=true 走高优先级队列（用于人工 Retry / cron 重投等短 backoff 场景）
-//
 // 幂等策略：使用 asynq.Unique(24h) 基于 payload+queue 生成 uniqueness key；
 // 当 24h 内同一 payload 再次投递，asynq 返回 ErrDuplicateTask，此处静默吞掉。
 //
@@ -45,7 +42,7 @@ func (c *Client) Close() error { return c.inner.Close() }
 //     asynq 层不做自动重试，避免与 CAS 语义打架；
 //   - Timeout(20m)：单次消费的硬上限，与 spec §4.3 instance_total_timeout_sec=900s 留出余量；
 //   - Retention(72h)：任务终态后保留 72h 便于观测。
-func (c *Client) EnqueueRunInstance(ctx context.Context, instanceID string, attempt int, useHigh bool) error {
+func (c *Client) EnqueueRunInstance(ctx context.Context, instanceID string, attempt int) error {
 	payload := RunInstancePayload{
 		InstanceID: instanceID,
 		Attempt:    attempt,
@@ -56,9 +53,6 @@ func (c *Client) EnqueueRunInstance(ctx context.Context, instanceID string, atte
 		return err
 	}
 	queue := QueueDefault
-	if useHigh {
-		queue = QueueHigh
-	}
 	_, err = c.inner.EnqueueContext(ctx,
 		asynq.NewTask(TaskTypeRunInstance, body),
 		asynq.Queue(queue),
